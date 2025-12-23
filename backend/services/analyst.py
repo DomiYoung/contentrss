@@ -58,6 +58,15 @@ class DailyBriefing(BaseModel):
     impact_chain: ImpactSegment
     framework: Optional[Framework] = None
 
+# Feature 007: Agent Skill Evolution Metadata
+class SkillMetadata(BaseModel):
+    id: str
+    name: str
+    version: str
+    last_refined: str
+    refinement_score: float # 0.0 - 1.0 based on user feedback loop
+    evolution_path: List[str]
+
 # --- Mock Data Store ---
 MOCK_FEED_DATA = [
     {
@@ -140,19 +149,33 @@ class AnalystService:
     def get_feed(self) -> List[IntelligenceCard]:
         from services.entities import USER_SUBSCRIPTIONS
         
-        # If user has subscriptions, we prefer showing related content (Mock filtering)
+        # 1. Filtered by Subscriptions
+        subscribed_items = []
         if USER_SUBSCRIPTIONS:
-            # Simple heuristic: if any tag in the card matches a subscribed entity id
-            filtered = [
+            subscribed_items = [
                 item for item in MOCK_FEED_DATA 
                 if any(tag.lower().replace('#', '') in USER_SUBSCRIPTIONS for tag in item["tags"]) 
-                or item.get("source_name") in USER_SUBSCRIPTIONS # Or source match
+                or item.get("source_name") in USER_SUBSCRIPTIONS
             ]
-            if filtered:
-                return [IntelligenceCard(**item) for item in filtered]
         
-        # Fallback to all feed items
+        # 2. Score & Sort (Simulated Intelligence Ranking)
+        # If user has subscriptions, show them first, then fill with other highly relevant items
+        if subscribed_items:
+            # Mark these as high priority
+            return [IntelligenceCard(**item) for item in subscribed_items]
+        
+        # 3. Fallback to all feed items if no subscriptions match
         return [IntelligenceCard(**item) for item in MOCK_FEED_DATA]
+
+    def get_analyst_skill(self) -> SkillMetadata:
+        return SkillMetadata(
+            id="market-intelligence-pro-001",
+            name="Professional Market Analyst",
+            version="2.1.0-beta",
+            last_refined="2025-12-23",
+            refinement_score=0.94,
+            evolution_path=["Keyword Extraction", "Sentiment Mapping", "Impact Chain Analysis", "Lenny Style Narrative"]
+        )
 
     def analyze_article(self, article_id: int) -> Optional[ArticleDetail]:
         item = next((x for x in MOCK_FEED_DATA if x["id"] == article_id), None)

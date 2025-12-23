@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { Sparkles } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { IntelligenceCard } from "@/components/IntelligenceCard";
@@ -9,8 +8,11 @@ import { DailyBriefing } from "@/views/DailyBriefing";
 import { PosterOverlay } from "@/components/viral/PosterOverlay";
 import type { IntelligenceCardData } from "@/types/index";
 import { fetchFeed } from "@/lib/api";
+import { DataView } from "@/views/DataView";
+import { AnimatePresence } from "framer-motion";
+import { cn } from "@/lib/utils";
 
-type Tab = "home" | "subscribe" | "briefing" | "profile";
+type Tab = "home" | "subscribe" | "briefing" | "data" | "profile";
 type ViewState = "feed" | "detail" | "briefing";
 
 export default function App() {
@@ -18,6 +20,8 @@ export default function App() {
   const [view, setView] = useState<ViewState>("feed");
   const [activeArticleId, setActiveArticleId] = useState<number | null>(null);
   const [viralData, setViralData] = useState<IntelligenceCardData | null>(null);
+
+  const [activeTagFilter, setActiveTagFilter] = useState("All");
 
   const [feed, setFeed] = useState<IntelligenceCardData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,6 +50,20 @@ export default function App() {
     setActiveArticleId(null);
   };
 
+  const handleDismiss = (id: number) => {
+    setFeed(prev => prev.filter(card => card.id !== id));
+  };
+
+  const handleTagClick = (tag: string) => {
+    import("@/lib/haptic").then(({ triggerHaptic }) => triggerHaptic("light"));
+    setActiveTagFilter(tag);
+  };
+
+  const filteredFeed = feed.filter(card => {
+    if (activeTagFilter === "All") return true;
+    return card.tags?.some(t => t.toLowerCase().includes(activeTagFilter.toLowerCase()));
+  });
+
   if (view === "briefing") {
     return <DailyBriefing onBack={handleBack} />;
   }
@@ -57,34 +75,58 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50 font-sans text-zinc-900 selection:bg-zinc-200 pb-20">
+    <div className="min-h-screen bg-[#FAF9F6] font-sans text-zinc-900 selection:bg-zinc-200 pb-20">
       <Header />
 
       <main className="max-w-md mx-auto px-4 py-4">
         {/* VIEW: HOME */}
         {activeTab === "home" && (
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-            {/* Scrollable Tags (Mock) */}
-            <div className="flex gap-2 overflow-x-auto pb-4 no-scrollbar items-center">
-              {["All", "Macro", "Luxury", "Tech", "Crypto"].map((tag, i) => (
-                <button key={tag} className={`px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${i === 0 ? "bg-zinc-900 text-white" : "bg-white text-zinc-500 border border-zinc-100"}`}>
-                  {tag}
-                </button>
-              ))}
+            {/* Scrollable Tags (V2 Style) */}
+            <div className="flex gap-2 overflow-x-auto pb-6 no-scrollbar items-center">
+              {["All", "Macro", "Luxury", "Tech", "Medical"].map((tag) => {
+                const isActive = activeTagFilter === tag;
+                return (
+                  <button
+                    key={tag}
+                    onClick={() => handleTagClick(tag)}
+                    className={cn(
+                      "px-5 py-2 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all active:scale-95 border",
+                      isActive
+                        ? "bg-zinc-900 text-white border-zinc-900 shadow-lg shadow-zinc-900/10"
+                        : "bg-white text-zinc-400 border-zinc-100 hover:border-zinc-200"
+                    )}
+                  >
+                    {tag}
+                  </button>
+                );
+              })}
             </div>
 
             <div className="space-y-1">
               {loading ? (
-                <div className="py-20 text-center text-zinc-400 text-sm animate-pulse">Analysing Industry Data...</div>
+                <div className="py-20 text-center">
+                  <span className="text-[10px] font-black text-zinc-300 uppercase tracking-widest animate-pulse">Analysing Industry Data...</span>
+                </div>
+              ) : filteredFeed.length > 0 ? (
+                <AnimatePresence mode="popLayout">
+                  {filteredFeed.map(card => (
+                    <IntelligenceCard
+                      key={card.id}
+                      data={card}
+                      onLongPress={(d) => setViralData(d)}
+                      onClick={() => handleCardClick(card.id)}
+                      onDismiss={handleDismiss}
+                    />
+                  ))}
+                </AnimatePresence>
               ) : (
-                feed.map(card => (
-                  <IntelligenceCard
-                    key={card.id}
-                    data={card}
-                    onLongPress={(d) => setViralData(d)}
-                    onClick={() => handleCardClick(card.id)}
-                  />
-                ))
+                <div className="py-20 text-center flex flex-col items-center gap-4 animate-in fade-in zoom-in-95">
+                  <div className="w-12 h-12 bg-zinc-100 rounded-2xl flex items-center justify-center text-zinc-300">
+                    <span className="font-black text-xl">!</span>
+                  </div>
+                  <p className="text-[11px] font-black text-zinc-400 uppercase tracking-widest">No Intelligence for {activeTagFilter}</p>
+                </div>
               )}
             </div>
 
@@ -114,6 +156,13 @@ export default function App() {
         {activeTab === "briefing" && (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 -mx-4">
             <DailyBriefing onBack={() => setActiveTab("home")} />
+          </div>
+        )}
+
+        {/* VIEW: DATA (Raw Data Explorer) */}
+        {activeTab === "data" && (
+          <div className="animate-in fade-in zoom-in-95 duration-500">
+            <DataView />
           </div>
         )}
 
