@@ -1,62 +1,133 @@
+import { useState, useEffect } from "react";
+import { Sparkles } from "lucide-react";
+import { Header } from "@/components/layout/Header";
+import { BottomNav } from "@/components/layout/BottomNav";
 import { IntelligenceCard } from "@/components/IntelligenceCard";
-import { IntelligenceCardData } from "@/types";
+import { ArticleDetail } from "@/views/ArticleDetail";
+import { EntityRadar } from "@/views/EntityRadar";
+import { DailyBriefing } from "@/views/DailyBriefing";
+import { PosterOverlay } from "@/components/viral/PosterOverlay";
+import type { IntelligenceCardData } from "@/types/index";
+import { fetchFeed } from "@/lib/api";
 
-const MOCK_FEED: IntelligenceCardData[] = [
-  {
-    id: 740784,
-    title: "爱马仕股份离奇蒸发",
-    polarity: "negative",
-    fact: "爱马仕继承人皮埃什的 6% 股份被理财顾问私自转移，主要流向 LVMH。",
-    impacts: [
-      { entity: "爱马仕", trend: "down", reason: "家族控股结构动荡" },
-      { entity: "LVMH", trend: "up", reason: "意外获得战略筹码" }
-    ],
-    opinion: "不仅是诈骗，更是老钱家族治理结构的典型溃败。财富屏蔽了风险，也屏蔽了常识。",
-    tags: ["奢侈品", "LVMH"],
-    source_name: "起点财经"
-  },
-  {
-    id: 741623,
-    title: "童颜针走下神坛",
-    polarity: "neutral",
-    fact: "童颜针市场从高价垄断转向多元竞争，新氧通过低价策略倒逼厂商让出定价权。",
-    impacts: [
-      { entity: "新氧", trend: "up", reason: "获客成本降低" },
-      { entity: "爱美客", trend: "down", reason: "护城河被渠道商攻破" }
-    ],
-    opinion: "医美暴利时代的终结号角。当渠道商开始因为那定价权，上游厂商的好日子就到头了。",
-    tags: ["医美", "消费医疗"],
-    source_name: "化妆品观察"
+type Tab = "home" | "subscribe" | "briefing" | "profile";
+type ViewState = "feed" | "detail" | "briefing";
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState<Tab>("home");
+  const [view, setView] = useState<ViewState>("feed");
+  const [activeArticleId, setActiveArticleId] = useState<number | null>(null);
+  const [viralData, setViralData] = useState<IntelligenceCardData | null>(null);
+
+  const [feed, setFeed] = useState<IntelligenceCardData[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Load Data
+  useEffect(() => {
+    fetchFeed()
+      .then((data) => {
+        setFeed(data);
+        setLoading(false);
+      })
+      .catch((e) => {
+        console.error(e);
+        setLoading(false);
+      });
+  }, []);
+
+  const handleCardClick = (id: number) => {
+    setActiveArticleId(id);
+    setView("detail");
+    window.scrollTo(0, 0);
+  };
+
+  const handleBack = () => {
+    setView("feed");
+    setActiveArticleId(null);
+  };
+
+  if (view === "briefing") {
+    return <DailyBriefing onBack={handleBack} />;
   }
-];
 
-function App() {
+  if (view === "detail" && activeArticleId) {
+    return (
+      <ArticleDetail id={activeArticleId} onBack={handleBack} />
+    );
+  }
+
   return (
-    <main className="min-h-screen bg-zinc-50 pb-20">
-      {/* Sticky Header */}
-      <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-md border-b border-zinc-100 px-4 py-3 flex justify-between items-center">
-        <h1 className="text-sm font-bold tracking-tight text-zinc-900">Industry Intelligence</h1>
-        <div className="text-xs font-medium px-2 py-1 bg-zinc-100 rounded-full text-zinc-500">
-          今日内参
-        </div>
-      </div>
+    <div className="min-h-screen bg-zinc-50 font-sans text-zinc-900 selection:bg-zinc-200 pb-20">
+      <Header />
 
-      {/* Feed Container */}
-      <div className="max-w-md mx-auto p-4 space-y-4">
-        <div className="text-xs text-zinc-400 font-medium ml-1 mb-2 uppercase tracking-widest">
-          Latest Briefing
-        </div>
+      <main className="max-w-md mx-auto px-4 py-4">
+        {/* VIEW: HOME */}
+        {activeTab === "home" && (
+          <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
+            {/* Scrollable Tags (Mock) */}
+            <div className="flex gap-2 overflow-x-auto pb-4 no-scrollbar items-center">
+              {["All", "Macro", "Luxury", "Tech", "Crypto"].map((tag, i) => (
+                <button key={tag} className={`px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${i === 0 ? "bg-zinc-900 text-white" : "bg-white text-zinc-500 border border-zinc-100"}`}>
+                  {tag}
+                </button>
+              ))}
+            </div>
 
-        {MOCK_FEED.map((card) => (
-          <IntelligenceCard key={card.id} data={card} />
-        ))}
+            <div className="space-y-1">
+              {loading ? (
+                <div className="py-20 text-center text-zinc-400 text-sm animate-pulse">Analysing Industry Data...</div>
+              ) : (
+                feed.map(card => (
+                  <IntelligenceCard
+                    key={card.id}
+                    data={card}
+                    onLongPress={(d) => setViralData(d)}
+                    onClick={() => handleCardClick(card.id)}
+                  />
+                ))
+              )}
+            </div>
 
-        <div className="text-center py-8 text-zinc-300 text-xs">
-          You have reached the end of the brief.
-        </div>
-      </div>
-    </main>
+            {!loading && (
+              <div className="text-center py-8 text-zinc-300 text-[10px] uppercase tracking-widest font-medium">
+                Briefing Complete
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Viral Poster Overlay for Home Feed Long Press */}
+        <PosterOverlay
+          isOpen={!!viralData}
+          onClose={() => setViralData(null)}
+          data={viralData as any}
+        />
+
+        {/* VIEW: SUBSCRIBE (Entity Radar) */}
+        {activeTab === "subscribe" && (
+          <div className="animate-in fade-in zoom-in-95 duration-500">
+            <EntityRadar />
+          </div>
+        )}
+
+        {/* VIEW: BRIEFING (Lenny Style Editorial) */}
+        {activeTab === "briefing" && (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 -mx-4">
+            <DailyBriefing onBack={() => setActiveTab("home")} />
+          </div>
+        )}
+
+        {/* VIEW: PROFILE (Placeholder) */}
+        {activeTab === "profile" && (
+          <div className="py-20 text-center text-zinc-400 animate-in zoom-in-95 duration-300">
+            <div className="w-20 h-20 bg-zinc-200 rounded-full mx-auto mb-4 animate-pulse" />
+            <p className="text-lg font-bold text-zinc-900">Guest User</p>
+            <button className="mt-4 text-xs font-bold text-zinc-900 underline">Sign In</button>
+          </div>
+        )}
+      </main>
+
+      <BottomNav activeTab={activeTab} onTabChange={setActiveTab} />
+    </div>
   );
 }
-
-export default App;

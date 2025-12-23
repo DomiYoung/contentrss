@@ -1,115 +1,118 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { TrendingUp, TrendingDown, MoreHorizontal, Share2, MessageSquareQuote } from "lucide-react";
-import { IntelligenceCardData, Polarity } from "@/types";
+import { TrendingUp, TrendingDown, Minus, MoreHorizontal, Share2, Sparkles } from "lucide-react";
+import type { IntelligenceCardData, Polarity } from "@/types/index";
 import { cn } from "@/lib/utils";
 
 interface IntelligenceCardProps {
     data: IntelligenceCardData;
+    onLongPress?: (data: IntelligenceCardData) => void;
+    onClick?: () => void;
 }
 
-const polarityColors: Record<Polarity, string> = {
-    positive: "bg-emerald-500",
-    negative: "bg-rose-500",
-    neutral: "bg-blue-500",
+const polarityStyles: Record<Polarity, { border: string; bg: string; text: string; icon: any }> = {
+    positive: { border: "border-emerald-200", bg: "bg-emerald-50", text: "text-emerald-700", icon: TrendingUp },
+    negative: { border: "border-rose-200", bg: "bg-rose-50", text: "text-rose-700", icon: TrendingDown },
+    neutral: { border: "border-zinc-200", bg: "bg-zinc-50", text: "text-zinc-600", icon: Minus },
 };
 
-const polarityTextColors: Record<Polarity, string> = {
-    positive: "text-emerald-600",
-    negative: "text-rose-600",
-    neutral: "text-blue-600",
-};
+export function IntelligenceCard({ data, onLongPress, onClick }: IntelligenceCardProps) {
+    const style = polarityStyles[data.polarity] || polarityStyles.neutral;
+    const PolarityIcon = style.icon;
 
-export function IntelligenceCard({ data }: IntelligenceCardProps) {
-    const [isExpanded, setIsExpanded] = useState(false);
-
-    // Viral Feature: Long Press Logic
     const handleLongPress = () => {
-        // In a real app, this would trigger the Poster Generator
-        console.log("Trigger Viral Poster Generator");
-        if (typeof window !== "undefined" && window.navigator && window.navigator.vibrate) {
-            window.navigator.vibrate(50); // Haptic feedback
+        if (typeof window !== "undefined" && window.navigator?.vibrate) {
+            window.navigator.vibrate(50);
+        }
+        onLongPress?.(data);
+    };
+
+    // Swipe Logic
+    const [isVisible, setIsVisible] = useState(true);
+    const onDragEnd = (event: any, info: any) => {
+        if (info.offset.x < -100) {
+            setIsVisible(false); // Dismiss
         }
     };
 
     return (
-        <motion.div
-            layout
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, x: -100 }}
-            whileTap={{ scale: 0.98 }}
-            className="bg-white rounded-2xl shadow-sm border border-zinc-100 overflow-hidden mb-4 relative"
-            onContextMenu={(e) => {
-                e.preventDefault();
-                handleLongPress();
-            }}
-        >
-            {/* Polarity Indicator Strip */}
-            <div className={cn("absolute top-0 left-0 w-1.5 h-full", polarityColors[data.polarity])} />
-
-            <div className="p-5 pl-7">
-                {/* Header: Title & Polarity */}
-                <div className="flex justify-between items-start mb-3">
-                    <div>
-                        <span className={cn("text-xs font-bold uppercase tracking-wider mb-1 block", polarityTextColors[data.polarity])}>
-                            {data.polarity === "positive" ? "利好 Bullish" : data.polarity === "negative" ? "利空 Bearish" : "关注 Watch"}
-                        </span>
-                        <h3 className="text-lg font-bold text-zinc-900 leading-tight">{data.title}</h3>
-                    </div>
-                    <button className="text-zinc-400 hover:text-zinc-600">
-                        <MoreHorizontal size={20} />
-                    </button>
-                </div>
-
-                {/* Core Fact */}
-                <div className="mb-4">
-                    <p className="text-[15px] font-medium text-zinc-800 leading-relaxed">
-                        {data.fact}
-                    </p>
-                </div>
-
-                {/* Impact Chain */}
-                <div className="space-y-2 mb-4">
-                    {data.impacts.map((impact, idx) => (
-                        <div key={idx} className="flex items-center text-sm bg-zinc-50 p-2 rounded-lg border border-zinc-100/50">
-                            {impact.trend === "up" ? (
-                                <TrendingUp className="text-emerald-500 mr-2 shrink-0" size={16} />
-                            ) : (
-                                <TrendingDown className="text-rose-500 mr-2 shrink-0" size={16} />
-                            )}
-                            <span className="font-semibold text-zinc-700 mr-1">{impact.entity}:</span>
-                            <span className="text-zinc-500 truncate">{impact.reason}</span>
+        <AnimatePresence>
+            {isVisible && (
+                <motion.div
+                    layout
+                    drag="x"
+                    dragConstraints={{ left: 0, right: 0 }}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0, x: 0 }}
+                    exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                    onDragEnd={onDragEnd}
+                    whileTap={{ scale: 0.99 }}
+                    className="bg-white rounded-[20px] shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] border border-zinc-100 overflow-hidden mb-4 relative flex flex-col touch-pan-y"
+                    onContextMenu={(e) => { e.preventDefault(); handleLongPress(); }}
+                    onClick={onClick}
+                >
+                    {/* Semantic Header */}
+                    <div className="px-5 pt-5 pb-2 flex justify-between items-start">
+                        <div className="flex items-center gap-2">
+                            <div className={cn("px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide flex items-center gap-1", style.bg, style.text)}>
+                                <PolarityIcon size={10} strokeWidth={3} />
+                                {data.polarity.toUpperCase()}
+                            </div>
+                            <span className="text-xs text-zinc-400 font-medium truncate max-w-[120px]">
+                                {data.source_name}
+                            </span>
                         </div>
-                    ))}
-                </div>
-
-                {/* Bottom Metadata & Actions */}
-                <div className="flex justify-between items-center text-xs text-zinc-400 mt-4 border-t border-zinc-50 pt-3">
-                    <div className="flex gap-2">
-                        {data.tags.map(tag => (
-                            <span key={tag} className="text-zinc-500">#{tag}</span>
-                        ))}
-                    </div>
-                    <div className="flex gap-4">
-                        <button className="flex items-center gap-1 hover:text-zinc-600">
-                            <MessageSquareQuote size={14} />
-                            <span>辣评</span>
-                        </button>
-                        <button className="flex items-center gap-1 hover:text-zinc-600" onClick={handleLongPress}>
-                            <Share2 size={14} />
-                            <span>分享</span>
+                        <button className="text-zinc-300 hover:text-zinc-600">
+                            <MoreHorizontal size={18} />
                         </button>
                     </div>
-                </div>
 
-                {/* Insight (Collapsed by default logic visualizer) */}
-                {data.opinion && (
-                    <div className="mt-3 text-xs text-zinc-500 italic bg-yellow-50/50 p-2 rounded border border-yellow-100/50">
-                        “{data.opinion}”
+                    {/* Content Body */}
+                    <div className="px-5 pb-5">
+                        <h3 className="text-[17px] font-bold text-zinc-900 leading-[1.3] mb-3 font-display tracking-tight">
+                            {data.title}
+                        </h3>
+
+                        <p className="text-[15px] leading-relaxed text-zinc-600 mb-4 font-normal">
+                            {data.fact}
+                        </p>
+
+                        {/* Impact List - The "Core Value" */}
+                        <div className="space-y-2">
+                            {data.impacts.map((impact, i) => (
+                                <div key={i} className="flex items-start gap-3 p-2.5 rounded-xl bg-zinc-50/80 border border-zinc-100/50">
+                                    <div className={cn("mt-0.5 p-1 rounded-full shrink-0",
+                                        impact.trend === 'up' ? "bg-emerald-100/50 text-emerald-600" : "bg-rose-100/50 text-rose-600"
+                                    )}>
+                                        {impact.trend === 'up' ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-baseline gap-2 mb-0.5">
+                                            <span className="text-[13px] font-bold text-zinc-900">{impact.entity}</span>
+                                            <span className={cn("text-[10px] uppercase font-bold tracking-wider", impact.trend === 'up' ? "text-emerald-600" : "text-rose-600")}>
+                                                {impact.trend}
+                                            </span>
+                                        </div>
+                                        <p className="text-[13px] text-zinc-500 leading-snug truncate">
+                                            {impact.reason}
+                                        </p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Insight/Opinion - "The Brain" */}
+                        {data.opinion && (
+                            <div className="mt-4 flex gap-3 items-start">
+                                <Sparkles size={14} className="text-amber-500 shrink-0 mt-1" />
+                                <p className="text-[13px] text-zinc-500 italic leading-snug border-l-2 border-amber-200 pl-3">
+                                    {data.opinion}
+                                </p>
+                            </div>
+                        )}
                     </div>
-                )}
-            </div>
-        </motion.div>
+                </motion.div>
+            )}
+        </AnimatePresence>
     );
 }

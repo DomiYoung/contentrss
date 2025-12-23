@@ -1,0 +1,111 @@
+{
+    "openapi": "3.1.0",
+    "info": {
+        "title": "Industry Intelligence API",
+        "version": "1.0.0"
+    },
+    "paths": {
+        "/api/feed": {
+            "get": {
+                "summary": "Get Intelligence Feed",
+                "operationId": "getFeed",
+                "responses": {
+                    "200": {
+                        "description": "Successful retrieval of intelligence feed",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/IntelligenceCard"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "Polarity": {
+                "type": "string",
+                "enum": [
+                    "positive",
+                    "negative",
+                    "neutral"
+                ]
+            },
+            "Impact": {
+                "type": "object",
+                "properties": {
+                    "entity": {
+                        "type": "string"
+                    },
+                    "trend": {
+                        "type": "string",
+                        "enum": [
+                            "up",
+                            "down"
+                        ]
+                    },
+                    "reason": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "entity",
+                    "trend",
+                    "reason"
+                ]
+            },
+            "IntelligenceCard": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer"
+                    },
+                    "title": {
+                        "type": "string"
+                    },
+                    "polarity": {
+                        "$ref": "#/components/schemas/Polarity"
+                    },
+                    "fact": {
+                        "type": "string"
+                    },
+                    "impacts": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/Impact"
+                        }
+                    },
+                    "opinion": {
+                        "type": "string"
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "source_name": {
+                        "type": "string"
+                    },
+                    "source_url": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "id",
+                    "title",
+                    "polarity",
+                    "fact",
+                    "impacts",
+                    "tags"
+                ]
+            }
+        }
+    }
+}
