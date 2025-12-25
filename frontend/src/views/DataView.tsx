@@ -1,121 +1,240 @@
 import { useState, useEffect } from "react";
-import { fetchFeed } from "@/lib/api";
-import { Code, RefreshCw, Layers, Terminal as TerminalIcon } from "lucide-react";
+import { fetchSpecialChat } from "@/lib/api";
+import { DATA_CATEGORIES, type DataCategoryId } from "@/lib/data-categories";
+import { RefreshCw, AlertCircle, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { triggerHaptic } from "@/lib/haptic";
+
+// 通用记录类型，适配 Special Chat 返回
+interface DataRecord {
+    id: string;
+    fields: Record<string, unknown>;
+}
 
 export function DataView() {
-    const [rawData, setRawData] = useState<any[]>([]);
+    const [activeCategory, setActiveCategory] = useState<DataCategoryId>("legal");
+    const [records, setRecords] = useState<DataRecord[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
-    const loadData = () => {
+    const loadData = async (categoryId: DataCategoryId) => {
         setLoading(true);
-        fetchFeed()
-            .then(data => {
-                setRawData(Array.isArray(data) ? data : []);
-                setLoading(false);
-            })
-            .catch(err => {
-                console.error(err);
-                setLoading(false);
-            });
+        setError(null);
+        try {
+            const category = DATA_CATEGORIES.find(c => c.id === categoryId);
+            // 使用 Special Chat 接口，content 传分类名称
+            const response = await fetchSpecialChat(category?.label || categoryId, 1036, true);
+
+            // 解析返回数据 - 适配分类对象结构
+            // 结构: res_content.response.content = "{ legal: [...], digital: [...] }"
+            let items: DataRecord[] = [];
+            if (response.res_status_code === '0' && response.res_content) {
+                const resContent = response.res_content;
+
+                // 层级1: res_content.response (对象)
+                const responseObj = resContent.response;
+                let categorizedData: Record<string, unknown[]> | null = null;
+
+                if (typeof responseObj === 'object' && responseObj !== null) {
+                    // 层级2: response.content (转义 JSON 字符串)
+                    const contentField = (responseObj as Record<string, unknown>).content;
+                    if (typeof contentField === 'string') {
+                        try {
+                            categorizedData = JSON.parse(contentField);
+                        } catch {
+                            // 解析失败
+                        }
+                    } else if (typeof contentField === 'object') {
+                        categorizedData = contentField as Record<string, unknown[]>;
+                    }
+                } else if (typeof responseObj === 'string') {
+                    try {
+                        categorizedData = JSON.parse(responseObj);
+                    } catch {
+                        // 解析失败
+                    }
+                }
+
+                // 从分类对象中按 categoryId 取对应的数组
+                if (categorizedData && typeof categorizedData === 'object') {
+                    const categoryArray = (categorizedData as Record<string, any[]>)[categoryId];
+                    if (Array.isArray(categoryArray)) {
+                        items = categoryArray.map((item: any, idx: number) => ({
+                            id: item.record_id || `item-${idx}`,
+                            fields: item.fields || item
+                        }));
+                    }
+                }
+            }
+            setRecords(items);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "加载失败");
+            setRecords([]);
+        } finally {
+            setLoading(false);
+        }
     };
 
     useEffect(() => {
-        loadData();
-    }, []);
+        loadData(activeCategory);
+    }, [activeCategory]);
+
+    const handleCategoryChange = (categoryId: DataCategoryId) => {
+        if (categoryId !== activeCategory) {
+            triggerHaptic("light");
+            setActiveCategory(categoryId);
+        }
+    };
+
+    const activeConfig = DATA_CATEGORIES.find(c => c.id === activeCategory);
 
     return (
         <div className="flex flex-col min-h-[85vh] bg-zinc-950 rounded-[32px] overflow-hidden border border-zinc-800 shadow-2xl animate-in fade-in zoom-in-95 duration-700">
-            {/* Analyst Header */}
-            <div className="px-6 py-5 bg-zinc-900/50 border-b border-zinc-800 flex items-center justify-between">
-                <div className="flex flex-col">
-                    <div className="flex items-center gap-2 mb-1">
-                        <TerminalIcon size={14} className="text-emerald-500" />
-                        <span className="text-[11px] font-black text-zinc-100 uppercase tracking-[0.2em]">Master Ledger v2.0</span>
+            {/* 紧凑头部: 分类 Chip + 刷新按钮 */}
+            <div className="px-4 py-3 bg-zinc-900/50 border-b border-zinc-800 flex items-center gap-3">
+                <div className="flex-1 overflow-x-auto no-scrollbar">
+                    <div className="flex gap-2 min-w-max">
+                        {DATA_CATEGORIES.map((category) => {
+                            const isActive = activeCategory === category.id;
+                            return (
+                                <button
+                                    key={category.id}
+                                    onClick={() => handleCategoryChange(category.id)}
+                                    className={cn(
+                                        "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider transition-all active:scale-95 whitespace-nowrap border",
+                                        isActive
+                                            ? "text-white border-transparent shadow-lg"
+                                            : "bg-zinc-800/50 text-zinc-400 border-zinc-700/50 hover:bg-zinc-800 hover:text-zinc-200"
+                                    )}
+                                    style={isActive ? { backgroundColor: category.color } : undefined}
+                                >
+                                    <span>{category.icon}</span>
+                                    <span>{category.label}</span>
+                                </button>
+                            );
+                        })}
                     </div>
-                    <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-widest font-bold">Raw Intelligence Packets</span>
                 </div>
                 <button
-                    onClick={loadData}
-                    className="p-2 px-4 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-full text-[10px] font-black text-emerald-500 transition-all active:scale-95 flex items-center gap-2 border border-emerald-500/20"
+                    onClick={() => loadData(activeCategory)}
+                    disabled={loading}
+                    className="p-2 bg-zinc-800 hover:bg-zinc-700 rounded-full text-zinc-400 transition-all active:scale-95 disabled:opacity-50 shrink-0"
                 >
-                    <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-                    SYNC DATA
+                    <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
                 </button>
             </div>
 
-            {/* Metrics Bar */}
-            <div className="px-6 py-3 bg-zinc-900/20 border-b border-zinc-800 flex gap-6">
-                <div className="flex flex-col">
-                    <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-tighter">Total Objects</span>
-                    <span className="text-lg font-mono font-black text-zinc-100">{rawData.length.toString().padStart(2, '0')}</span>
+            {/* 状态栏 */}
+            <div className="px-4 py-2 bg-zinc-900/30 border-b border-zinc-800 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-mono font-bold text-zinc-400">
+                        共 {records.length} 条
+                    </span>
+                    <span className="text-zinc-600">·</span>
+                    <span className="text-[11px] font-bold" style={{ color: activeConfig?.color }}>
+                        {activeConfig?.label}
+                    </span>
                 </div>
-                <div className="flex flex-col border-l border-zinc-800 pl-6">
-                    <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-tighter">Network Latency</span>
-                    <span className="text-lg font-mono font-black text-emerald-500">22ms</span>
-                </div>
-                <div className="flex flex-col border-l border-zinc-800 pl-6">
-                    <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-tighter">Status</span>
-                    <span className="text-lg font-mono font-black text-emerald-500 animate-pulse">LIVE</span>
-                </div>
+                <span className={cn(
+                    "text-[10px] font-mono font-bold uppercase",
+                    loading ? "text-amber-500 animate-pulse" : error ? "text-rose-500" : "text-emerald-500"
+                )}>
+                    {loading ? "加载中..." : error ? "错误" : "就绪"}
+                </span>
             </div>
 
-            {/* Structured Content Area */}
-            <div className="flex-1 overflow-auto p-4 space-y-3 no-scrollbar">
+            {/* Content Area */}
+            <div className="flex-1 overflow-auto p-3 space-y-2 no-scrollbar">
                 {loading ? (
                     <div className="h-full flex flex-col items-center justify-center gap-4 py-20">
                         <div className="w-8 h-8 border-2 border-zinc-800 border-t-emerald-500 rounded-full animate-spin" />
-                        <span className="text-[10px] font-mono text-zinc-600 uppercase tracking-[0.3em]">Querying Database...</span>
+                        <span className="text-[10px] font-mono text-zinc-600 uppercase tracking-[0.2em]">查询 {activeConfig?.label}...</span>
+                    </div>
+                ) : error ? (
+                    <div className="h-full flex flex-col items-center justify-center gap-4 py-20">
+                        <AlertCircle size={32} className="text-rose-500" />
+                        <span className="text-[12px] font-bold text-rose-400">{error}</span>
+                        <button
+                            onClick={() => loadData(activeCategory)}
+                            className="px-4 py-2 bg-rose-500/10 text-rose-400 rounded-full text-[11px] font-bold hover:bg-rose-500/20 transition-colors"
+                        >
+                            重试
+                        </button>
+                    </div>
+                ) : records.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center gap-4 py-20">
+                        <Layers size={32} className="text-zinc-600" />
+                        <span className="text-[12px] font-bold text-zinc-500">暂无数据</span>
                     </div>
                 ) : (
-                    rawData.map((item, idx) => (
+                    records.map((record, idx) => (
                         <div
-                            key={item.id || idx}
-                            className="p-5 bg-zinc-900/30 border border-zinc-800 rounded-2xl hover:bg-zinc-900/50 transition-colors group"
+                            key={record.id || idx}
+                            className="p-4 bg-zinc-900/30 border border-zinc-800 rounded-2xl hover:bg-zinc-900/50 transition-colors group"
                         >
                             <div className="flex justify-between items-center mb-3">
-                                <div className="flex items-center gap-3">
-                                    <span className="text-[10px] font-mono text-zinc-600 font-bold px-2 py-0.5 border border-zinc-800 rounded">#{item.id}</span>
-                                    <div className={cn(
-                                        "w-2 h-2 rounded-full",
-                                        item.polarity === "positive" ? "bg-emerald-500" : item.polarity === "negative" ? "bg-rose-500" : "bg-zinc-500"
-                                    )} />
-                                    <span className="text-[10px] font-mono font-black text-zinc-400 uppercase tracking-widest">{item.source_name}</span>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[9px] font-mono text-zinc-600 font-bold px-1.5 py-0.5 border border-zinc-800 rounded">#{idx + 1}</span>
+                                    <div
+                                        className="w-1.5 h-1.5 rounded-full"
+                                        style={{ backgroundColor: activeConfig?.color }}
+                                    />
                                 </div>
-                                <Layers size={14} className="text-zinc-700 group-hover:text-zinc-400 transition-colors" />
+                                <Layers size={12} className="text-zinc-700 group-hover:text-zinc-400 transition-colors" />
                             </div>
 
-                            <h4 className="text-sm font-bold text-zinc-200 mb-2 leading-tight">{item.title}</h4>
+                            {/* 渲染字段 */}
+                            <div className="space-y-3">
+                                {Object.entries(record.fields || {}).map(([key, value]) => {
+                                    // 尝试解析嵌套的 JSON 字符串（如 "文章信息"）
+                                    let parsedValue = value;
+                                    let isNested = false;
 
-                            <div className="bg-zinc-950/50 p-3 rounded-xl border border-zinc-800/50 mb-3">
-                                <p className="text-[11px] font-mono text-zinc-500 leading-relaxed italic">
-                                    {item.fact}
-                                </p>
-                            </div>
+                                    if (typeof value === 'string' && (value.startsWith('{') || value.startsWith('['))) {
+                                        try {
+                                            parsedValue = JSON.parse(value);
+                                            isNested = true;
+                                        } catch (e) {
+                                            // 解析失败则保持原样
+                                        }
+                                    }
 
-                            <div className="flex flex-wrap gap-2">
-                                {item.tags?.map((tag: string) => (
-                                    <span key={tag} className="text-[9px] font-mono text-emerald-500/70 py-0.5 px-2 bg-emerald-500/5 border border-emerald-500/10 rounded uppercase">
-                                        {tag}
-                                    </span>
-                                ))}
+                                    return (
+                                        <div key={key} className="flex flex-col gap-1">
+                                            <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider border-l-2 border-zinc-700 pl-2">
+                                                {key}
+                                            </span>
+                                            <div className="bg-zinc-950/50 rounded-lg p-2 border border-zinc-800/30">
+                                                {isNested && typeof parsedValue === 'object' ? (
+                                                    <div className="space-y-2">
+                                                        {Object.entries(parsedValue as Record<string, any>).map(([subKey, subValue]) => (
+                                                            <div key={subKey} className="flex flex-col">
+                                                                <span className="text-[7px] text-zinc-600 uppercase font-black">{subKey}</span>
+                                                                <p className="text-[11px] text-zinc-400 leading-relaxed italic">
+                                                                    {String(subValue || '-')}
+                                                                </p>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <p className="text-[11px] font-mono text-zinc-300 leading-relaxed break-all">
+                                                        {String(value || '-')}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         </div>
                     ))
                 )}
             </div>
 
-            {/* System Footer */}
-            <div className="px-6 py-4 bg-zinc-900/40 border-t border-zinc-800 flex justify-between items-center">
-                <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-1.5 text-[9px] text-zinc-500 font-black uppercase tracking-widest">
-                        <Code size={12} />
-                        <span>Build 1.2.9-X</span>
-                    </div>
-                </div>
-                <div className="text-[9px] font-mono font-bold text-zinc-700 uppercase tracking-tighter">
-                    Kernel: PRODUCER_SERVICE_01
-                </div>
+            {/* 紧凑 Footer */}
+            <div className="px-4 py-2 bg-zinc-900/40 border-t border-zinc-800 flex justify-between items-center">
+                <span className="text-[8px] text-zinc-600 font-mono uppercase">元数据源</span>
+                <span className="text-[8px] text-zinc-600 font-mono">feishu-bitable</span>
             </div>
         </div>
     );

@@ -2,41 +2,66 @@ import { useState, useEffect } from "react";
 import { Header } from "@/components/layout/Header";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { IntelligenceCard } from "@/components/IntelligenceCard";
+import { CategoryFilter } from "@/components/CategoryFilter";
+import { BriefingEntryCard } from "@/components/BriefingEntryCard";
 import { ArticleDetail } from "@/views/ArticleDetail";
 import { EntityRadar } from "@/views/EntityRadar";
 import { DailyBriefing } from "@/views/DailyBriefing";
-import { PosterOverlay } from "@/components/viral/PosterOverlay";
+import { Profile } from "@/views/Profile";
+import { MyNotes } from "@/views/MyNotes";
 import type { IntelligenceCardData } from "@/types/index";
-import { fetchFeed } from "@/lib/api";
-import { DataView } from "@/views/DataView";
+import { fetchIntelligence, type IntelligenceCard as BackendCard } from "@/lib/api";
 import { AnimatePresence } from "framer-motion";
-import { cn } from "@/lib/utils";
+import type { Tab as BottomTab } from "@/components/layout/BottomNav";
 
-type Tab = "home" | "subscribe" | "briefing" | "data" | "profile";
+type Tab = BottomTab | "my-notes";
 type ViewState = "feed" | "detail" | "briefing";
+
+// 将后端卡片转为前端类型
+function backendToFrontend(card: BackendCard): IntelligenceCardData {
+  return {
+    id: card.id,
+    title: card.title,
+    polarity: card.polarity,
+    fact: card.core_insight || card.fact, // 优先展示核心洞察
+    impacts: card.impacts,
+    opinion: card.alpha_opportunity || card.opinion, // 优先展示 Alpha 机会
+    tags: card.tags,
+    source_name: card.source_name,
+    source_url: card.source_url,
+  };
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>("home");
   const [view, setView] = useState<ViewState>("feed");
   const [activeArticleId, setActiveArticleId] = useState<number | null>(null);
-  const [viralData, setViralData] = useState<IntelligenceCardData | null>(null);
 
-  const [activeTagFilter, setActiveTagFilter] = useState("All");
+  // 统一使用分类 key 筛选
+  const [activeCategory, setActiveCategory] = useState("all");
 
   const [feed, setFeed] = useState<IntelligenceCardData[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Load Data
+  // 调用后端 /api/intelligence 获取 AI 分析后的情报
   useEffect(() => {
-    fetchFeed()
-      .then((data) => {
-        setFeed(data);
+    async function loadFeed() {
+      try {
+        // 调用后端 API（默认开启 AI 分析）
+        const response = await fetchIntelligence(20, false);
+
+        // 转换为前端类型
+        const cards = response.cards.map(backendToFrontend);
+        setFeed(cards);
+      } catch (err) {
+        // 后端不可用时静默失败
+        console.warn('后端 API 不可用，情报加载失败');
+      } finally {
         setLoading(false);
-      })
-      .catch((e) => {
-        console.error(e);
-        setLoading(false);
-      });
+      }
+    }
+
+    loadFeed();
   }, []);
 
   const handleCardClick = (id: number) => {
@@ -50,19 +75,8 @@ export default function App() {
     setActiveArticleId(null);
   };
 
-  const handleDismiss = (id: number) => {
-    setFeed(prev => prev.filter(card => card.id !== id));
-  };
-
-  const handleTagClick = (tag: string) => {
-    import("@/lib/haptic").then(({ triggerHaptic }) => triggerHaptic("light"));
-    setActiveTagFilter(tag);
-  };
-
-  const filteredFeed = feed.filter(card => {
-    if (activeTagFilter === "All") return true;
-    return card.tags?.some(t => t.toLowerCase().includes(activeTagFilter.toLowerCase()));
-  });
+  // TODO: 后端按分类筛选
+  const filteredFeed = feed;
 
   if (view === "briefing") {
     return <DailyBriefing onBack={handleBack} />;
@@ -74,39 +88,36 @@ export default function App() {
     );
   }
 
+  // Full screen view for My Notes (hide bottom nav if desired, or keep it)
+  if (activeTab === "my-notes") {
+    return <MyNotes onBack={() => setActiveTab("profile")} />;
+  }
+
   return (
     <div className="min-h-screen bg-[#FAF9F6] font-sans text-zinc-900 selection:bg-zinc-200 pb-20">
-      <Header />
+      {/* Hide Header on Profile tab */}
+      {activeTab !== "profile" && <Header />}
 
       <main className="max-w-md mx-auto px-4 py-4">
         {/* VIEW: HOME */}
         {activeTab === "home" && (
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-            {/* Scrollable Tags (V2 Style) */}
-            <div className="flex gap-2 overflow-x-auto pb-6 no-scrollbar items-center">
-              {["All", "Macro", "Luxury", "Tech", "Medical"].map((tag) => {
-                const isActive = activeTagFilter === tag;
-                return (
-                  <button
-                    key={tag}
-                    onClick={() => handleTagClick(tag)}
-                    className={cn(
-                      "px-5 py-2 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all active:scale-95 border",
-                      isActive
-                        ? "bg-zinc-900 text-white border-zinc-900 shadow-lg shadow-zinc-900/10"
-                        : "bg-white text-zinc-400 border-zinc-100 hover:border-zinc-200"
-                    )}
-                  >
-                    {tag}
-                  </button>
-                );
-              })}
+            {/* 统一分类标签筛选 */}
+            <CategoryFilter
+              activeKey={activeCategory}
+              onChange={setActiveCategory}
+            />
+
+            {/* Today's Briefing 入口卡片 - 核心功能前置 */}
+            <div className="mt-4 mb-4">
+              <BriefingEntryCard onClick={() => setActiveTab("briefing")} />
             </div>
 
-            <div className="space-y-1">
+            {/* 高保真情报卡片列表 (Standard PRD v3.0) */}
+            <div className="space-y-4">
               {loading ? (
                 <div className="py-20 text-center">
-                  <span className="text-[10px] font-black text-zinc-300 uppercase tracking-widest animate-pulse">Analysing Industry Data...</span>
+                  <span className="text-[10px] font-black text-zinc-300 uppercase tracking-widest animate-pulse">正在分析行业情报...</span>
                 </div>
               ) : filteredFeed.length > 0 ? (
                 <AnimatePresence mode="popLayout">
@@ -114,9 +125,7 @@ export default function App() {
                     <IntelligenceCard
                       key={card.id}
                       data={card}
-                      onLongPress={(d) => setViralData(d)}
                       onClick={() => handleCardClick(card.id)}
-                      onDismiss={handleDismiss}
                     />
                   ))}
                 </AnimatePresence>
@@ -125,7 +134,7 @@ export default function App() {
                   <div className="w-12 h-12 bg-zinc-100 rounded-2xl flex items-center justify-center text-zinc-300">
                     <span className="font-black text-xl">!</span>
                   </div>
-                  <p className="text-[11px] font-black text-zinc-400 uppercase tracking-widest">No Intelligence for {activeTagFilter}</p>
+                  <p className="text-[11px] font-black text-zinc-400 uppercase tracking-widest">No Intelligence for {activeCategory}</p>
                 </div>
               )}
             </div>
@@ -136,47 +145,39 @@ export default function App() {
               </div>
             )}
           </div>
-        )}
-
-        {/* Viral Poster Overlay for Home Feed Long Press */}
-        <PosterOverlay
-          isOpen={!!viralData}
-          onClose={() => setViralData(null)}
-          data={viralData as any}
-        />
+        )
+        }
 
         {/* VIEW: SUBSCRIBE (Entity Radar) */}
-        {activeTab === "subscribe" && (
-          <div className="animate-in fade-in zoom-in-95 duration-500">
-            <EntityRadar />
-          </div>
-        )}
+        {
+          activeTab === "subscribe" && (
+            <div className="animate-in fade-in zoom-in-95 duration-500 -mx-4 -mt-4">
+              <EntityRadar />
+            </div>
+          )
+        }
 
         {/* VIEW: BRIEFING (Lenny Style Editorial) */}
-        {activeTab === "briefing" && (
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 -mx-4">
-            <DailyBriefing onBack={() => setActiveTab("home")} />
-          </div>
-        )}
+        {
+          activeTab === "briefing" && (
+            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 -mx-4 -mt-4">
+              <DailyBriefing onBack={() => setActiveTab("home")} />
+            </div>
+          )
+        }
 
-        {/* VIEW: DATA (Raw Data Explorer) */}
-        {activeTab === "data" && (
-          <div className="animate-in fade-in zoom-in-95 duration-500">
-            <DataView />
-          </div>
-        )}
 
-        {/* VIEW: PROFILE (Placeholder) */}
-        {activeTab === "profile" && (
-          <div className="py-20 text-center text-zinc-400 animate-in zoom-in-95 duration-300">
-            <div className="w-20 h-20 bg-zinc-200 rounded-full mx-auto mb-4 animate-pulse" />
-            <p className="text-lg font-bold text-zinc-900">Guest User</p>
-            <button className="mt-4 text-xs font-bold text-zinc-900 underline">Sign In</button>
-          </div>
-        )}
-      </main>
+        {/* VIEW: PROFILE */}
+        {
+          activeTab === "profile" && (
+            <div className="animate-in fade-in zoom-in-95 duration-300 -mx-4 -mt-4">
+              <Profile onNavigate={(view) => setActiveTab(view as Tab)} />
+            </div>
+          )
+        }
+      </main >
 
-      <BottomNav activeTab={activeTab} onTabChange={setActiveTab} />
-    </div>
+      <BottomNav activeTab={activeTab as any} onTabChange={setActiveTab as any} />
+    </div >
   );
 }

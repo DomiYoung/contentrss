@@ -31,8 +31,13 @@ Thumbs.db
 
 # Environment
 .env
+.env.*
 .env.local
 .env.*.local
+
+# Database
+*.db
+*.sqlite
 
 # Build outputs
 frontend/dist/

@@ -1,38 +1,166 @@
-import type { IntelligenceCardData } from "@/types/index";
-import type { ArticleDetailData } from "@/types/article";
-import type { DailyBriefingData } from "@/types/briefing";
-import type { Entity, SubscriptionResponse } from "@/types/entities";
+// Token 管理逻辑
+let _apiToken: string | null = localStorage.getItem('access_token');
 
-const API_BASE = "http://localhost:8000/api";
+import type { IntelligenceCardData } from "@/types";
+import type { ArticleDetailData } from "@/types/article";
+import type { Entity, SubscriptionResponse } from "@/types/entities";
+import type { DailyBriefingData } from "@/types/briefing";
+
+export const setApiToken = (token: string) => {
+    _apiToken = token;
+    localStorage.setItem('access_token', token);
+};
+
+export const getApiToken = () => _apiToken;
+
+// 后端 API 基础地址
+const BACKEND_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+
+// 后端情报 API 响应类型
+export interface IntelligenceCard {
+    id: number;
+    title: string;
+    polarity: 'positive' | 'negative' | 'neutral';
+    fact: string;
+    impacts: Array<{ entity: string; trend: 'up' | 'down'; reason: string }>;
+    opinion: string;
+    tags: string[];
+    source_name?: string;
+    source_url?: string;
+    // 新增深度分析字段
+    core_insight?: string;
+    catalyst?: string;
+    root_cause?: string;
+    alpha_opportunity?: string;
+    confidence?: 'high' | 'medium' | 'low';
+}
+
+export interface IntelligenceResponse {
+    count: number;
+    cards: IntelligenceCard[];
+}
+
+/**
+ * 获取 AI 分析后的情报卡片（调用后端 /api/intelligence）
+ */
+export async function fetchIntelligence(limit: number = 20, skipAi: boolean = false): Promise<IntelligenceResponse> {
+    const url = `${BACKEND_BASE_URL}/api/intelligence?limit=${limit}&skip_ai=${skipAi}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+        throw new Error(`Intelligence API Error: ${response.status}`);
+    }
+
+    return response.json();
+}
+
+// 通用请求包装器 (参考 react-ai 风格)
+async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
+    const token = getApiToken();
+    const headers = new Headers(options.headers);
+
+    if (token) {
+        headers.set('Authorization', `Bearer ${token}`);
+    }
+
+    // parity with react-ai
+    headers.set('page_url', window.location.pathname);
+    headers.set('Content-Type', 'application/json');
+
+    const response = await fetch(url, {
+        ...options,
+        headers,
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.res_message || `API Error: ${response.status}`);
+    }
+
+    return response.json();
+}
+
+/**
+ * 特殊接口请求 (Special Chat)
+ * 参考 react-ai/src/api/chat/chatAPI.ts
+ */
+export interface SpecialChatParams {
+    content: string;
+    chainId: number;
+    sync: boolean;
+}
+
+export interface SpecialChatResponse {
+    res_status_code: string;
+    res_message?: string;
+    res_content?: {
+        runId?: number;
+        response?: string;
+        content?: string;
+        analysis?: string;
+        [key: string]: unknown;
+    };
+}
+
+export async function fetchSpecialChat(content: string, chainId: number = 1036, sync: boolean = true): Promise<SpecialChatResponse> {
+    const GATE_API = import.meta.env.VITE_SPECIAL_API_URL || "https://gate.shjinjia.com.cn/api/databrain/Chat/http/special";
+
+    return request<SpecialChatResponse>(GATE_API, {
+        method: 'POST',
+        body: JSON.stringify({ content, chainId, sync }),
+    });
+}
+
+// 兼容旧接口
+const API_BASE = "/api";
 
 export async function fetchFeed(): Promise<IntelligenceCardData[]> {
-    const res = await fetch(`${API_BASE}/feed`);
-    if (!res.ok) throw new Error("Failed to fetch feed");
-    return res.json();
+    return request(`${API_BASE}/feed`);
 }
 
 export async function fetchArticle(id: number): Promise<ArticleDetailData> {
-    const res = await fetch(`${API_BASE}/article/${id}`);
-    if (!res.ok) throw new Error("Failed to fetch article");
-    return res.json();
+    return request(`${API_BASE}/article/${id}`);
 }
 
 export async function fetchEntities(): Promise<Entity[]> {
-    const res = await fetch(`${API_BASE}/entities`);
-    if (!res.ok) throw new Error("Failed to fetch entities");
-    return res.json();
+    return request(`${API_BASE}/entities`);
 }
 
 export async function toggleSubscription(entityId: string): Promise<SubscriptionResponse> {
-    const res = await fetch(`${API_BASE}/entities/toggle/${entityId}`, {
+    return request(`${API_BASE}/entities/toggle/${entityId}`, {
         method: "POST"
     });
-    if (!res.ok) throw new Error("Failed to toggle subscription");
-    return res.json();
 }
 
 export async function fetchDailyBriefing(): Promise<DailyBriefingData> {
-    const res = await fetch(`${API_BASE}/briefing/daily`);
-    if (!res.ok) throw new Error("Failed to fetch briefing");
-    return res.json();
+    return request(`${API_BASE}/briefing/daily`);
+}
+
+// 飞书多维表格 API (Data View 重构后使用通用 request)
+import { DATA_API_ENDPOINT, DATA_CATEGORIES, type DataCategoryId } from './data-categories';
+
+export interface BitableRecord {
+    id: string;
+    fields: Record<string, unknown>;
+    [key: string]: unknown;
+}
+
+export interface BitableResponse {
+    code: number;
+    msg: string;
+    data: {
+        items: BitableRecord[];
+        total: number;
+        has_more: boolean;
+    };
+}
+
+export async function fetchBitableData(categoryId: DataCategoryId): Promise<BitableResponse> {
+    const category = DATA_CATEGORIES.find(c => c.id === categoryId);
+    if (!category) throw new Error(`Unknown category: ${categoryId}`);
+
+    return request<BitableResponse>(DATA_API_ENDPOINT, {
+        method: 'POST',
+        body: JSON.stringify({ url: category.url }),
+    });
 }

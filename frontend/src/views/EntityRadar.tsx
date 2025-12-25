@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Plus, Check, Radio, Briefcase, Hash, ShieldCheck } from "lucide-react";
-import { RadarPulse } from "@/components/layout/RadarPulse";
+import { Search, Plus, Briefcase, Hash, Factory } from "lucide-react";
 import { fetchEntities, toggleSubscription } from "@/lib/api";
 import { triggerHaptic } from "@/lib/haptic";
 import type { Entity } from "@/types/entities";
@@ -10,6 +9,7 @@ export function EntityRadar() {
     const [entities, setEntities] = useState<Entity[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState("");
+    const [activeTab, setActiveTab] = useState<"all" | "company" | "industry" | "topic">("all");
 
     useEffect(() => {
         fetchEntities()
@@ -17,119 +17,161 @@ export function EntityRadar() {
                 setEntities(data);
                 setLoading(false);
             })
-            .catch(err => {
-                console.error(err);
+            .catch(() => {
                 setLoading(false);
             });
     }, []);
 
-    const handleToggle = async (id: string) => {
+    const handleToggle = async (id: string, e: React.MouseEvent) => {
+        e.stopPropagation();
         triggerHaptic("medium");
         try {
             const res = await toggleSubscription(id);
             setEntities(prev => prev.map(e =>
                 e.id === id ? { ...e, is_subscribed: res.is_subscribed } : e
             ));
-        } catch (err) {
-            console.error(err);
+        } catch {
+            // Error handling
         }
     };
 
-    const filteredEntities = entities.filter(e =>
-        e.name.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    const filteredEntities = entities.filter(e => {
+        const matchesSearch = e.name.toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesTab = activeTab === "all" || e.type === activeTab;
+        return matchesSearch && matchesTab;
+    });
 
     const typeIcons = {
-        company: Briefcase,
-        industry: Radio,
+        company: Factory,
+        industry: Briefcase,
         topic: Hash
     };
 
-    return (
-        <div className="relative min-h-[85vh] flex flex-col pt-4 overflow-hidden bg-[#FAF9F6]">
-            {/* Background Tech Layer */}
-            <div className="absolute inset-0 z-0 select-none">
-                <RadarPulse />
-            </div>
+    const typeColors = {
+        company: "bg-blue-100 text-blue-600",
+        industry: "bg-orange-100 text-orange-600",
+        topic: "bg-purple-100 text-purple-600"
+    };
 
-            {/* Content Layer */}
-            <div className="relative z-10 w-full max-w-md mx-auto px-6">
-                <div className="mb-12 text-center pt-8">
-                    <div className="flex items-center justify-center gap-2 mb-4">
-                        <ShieldCheck size={20} className="text-zinc-900" />
-                        <h2 className="text-3xl font-black text-zinc-900 tracking-tighter uppercase italic">Entity Radar</h2>
-                    </div>
-                    <p className="text-[11px] text-zinc-400 font-black uppercase tracking-[0.3em]">Sector Monitoring Active</p>
+    return (
+        <div className="min-h-screen bg-background-light dark:bg-background-dark font-display text-gray-900 dark:text-gray-100 pb-24">
+            <div className="max-w-md mx-auto min-h-screen bg-white dark:bg-surface-dark relative shadow-xl overflow-hidden px-5 pt-8">
+
+                {/* Header */}
+                <div className="mb-6">
+                    <h1 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white mb-2">
+                        实体雷达
+                    </h1>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                        个性化订阅 · 追踪关注
+                    </p>
                 </div>
 
                 {/* Search Bar */}
-                <div className="relative mb-10 group">
-                    <div className="absolute inset-y-0 left-5 flex items-center pointer-events-none text-zinc-400 group-focus-within:text-zinc-900 transition-colors">
-                        <Search size={18} strokeWidth={2.5} />
+                <div className="relative mb-6">
+                    <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-gray-400">
+                        <Search size={20} />
                     </div>
                     <input
                         type="text"
-                        placeholder="Search entities, topics, or sectors..."
+                        placeholder="搜索公司、行业或话题..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full bg-white/60 backdrop-blur-3xl border border-zinc-200/60 rounded-[28px] py-4 pl-14 pr-6 text-[13px] font-bold shadow-2xl shadow-zinc-200/20 focus:outline-none focus:ring-4 focus:ring-zinc-900/5 transition-all placeholder:text-zinc-300"
+                        className="w-full bg-gray-100 dark:bg-white/5 border-none rounded-2xl py-3.5 pl-12 pr-4 text-sm font-medium focus:ring-2 focus:ring-primary/20 placeholder:text-gray-400"
                     />
                 </div>
 
-                {/* Entity Grid/List */}
-                <div className="space-y-4 pb-32">
+                {/* Category Pills */}
+                <div className="flex items-center gap-2 mb-8 overflow-x-auto no-scrollbar pb-2">
+                    {[
+                        { id: "all", label: "全部" },
+                        { id: "company", label: "公司" },
+                        { id: "industry", label: "行业" },
+                        { id: "topic", label: "话题" }
+                    ].map(tab => (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id as any)}
+                            className={`px-6 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-all ${activeTab === tab.id
+                                ? "bg-white shadow-sm text-gray-900 border border-gray-100"
+                                : "bg-gray-100/50 text-gray-400 hover:bg-gray-100"
+                                }`}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
+                </div>
+
+                {/* List */}
+                <div className="space-y-4">
                     <AnimatePresence mode="popLayout">
                         {loading ? (
                             <div className="text-center py-20">
-                                <span className="text-[10px] font-black text-zinc-300 uppercase tracking-widest animate-pulse">Scanning Market...</span>
+                                <span className="text-xs font-bold text-gray-300 uppercase tracking-widest animate-pulse">Scanning...</span>
                             </div>
                         ) : (
                             filteredEntities.map((entity, i) => {
-                                const Icon = typeIcons[entity.type as keyof typeof typeIcons];
+                                const Icon = typeIcons[entity.type as keyof typeof typeIcons] || Hash;
+                                const colorClass = typeColors[entity.type as keyof typeof typeColors] || "bg-gray-100 text-gray-600";
+
                                 return (
                                     <motion.div
                                         key={entity.id}
                                         layout
-                                        initial={{ opacity: 0, scale: 0.98, y: 10 }}
-                                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                                        exit={{ opacity: 0, scale: 0.95 }}
-                                        transition={{ duration: 0.4, delay: i * 0.03 }}
-                                        className={`group relative flex items-center gap-5 p-5 rounded-[32px] border transition-all duration-500 ${entity.is_subscribed
-                                            ? "bg-white border-zinc-900 shadow-xl shadow-zinc-900/5"
-                                            : "bg-white/40 border-zinc-200/50 hover:bg-white/80"
-                                            }`}
+                                        initial={{ opacity: 0, y: 10 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0 }}
+                                        transition={{ duration: 0.3, delay: i * 0.05 }}
+                                        className="flex items-center justify-between p-4 bg-white dark:bg-white/5 border border-gray-50 dark:border-white/5 rounded-2xl shadow-sm"
                                     >
-                                        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-2xl shadow-sm transition-transform duration-500 group-hover:scale-110 ${entity.is_subscribed ? "bg-zinc-50" : "bg-white"
-                                            }`}>
-                                            {entity.icon}
-                                        </div>
-
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <h4 className="font-black text-zinc-900 text-[15px] truncate tracking-tight">{entity.name}</h4>
-                                                <div className="px-1.5 py-0.5 rounded-md bg-zinc-100 text-zinc-400 group-hover:bg-zinc-900 group-hover:text-white transition-colors">
-                                                    <Icon size={10} strokeWidth={3} />
-                                                </div>
+                                        <div className="flex items-center gap-4">
+                                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${colorClass}`}>
+                                                <Icon size={20} />
                                             </div>
-                                            <p className="text-[10px] text-zinc-400 font-black uppercase tracking-widest">
-                                                {entity.subscriber_count.toLocaleString()} Signals
-                                            </p>
+                                            <div>
+                                                <h4 className="font-bold text-gray-900 dark:text-white text-[15px] leading-tight mb-1">
+                                                    {entity.name}
+                                                </h4>
+                                                <p className="text-xs text-gray-500 font-medium">
+                                                    {entity.subscriber_count > 999 ? (entity.subscriber_count / 1000).toFixed(1) + 'k' : entity.subscriber_count} 关注
+                                                </p>
+                                            </div>
                                         </div>
 
                                         <button
-                                            onClick={() => handleToggle(entity.id)}
-                                            className={`p-3 rounded-full transition-all active:scale-75 ${entity.is_subscribed
-                                                ? "bg-zinc-900 text-white shadow-xl shadow-zinc-900/20 rotate-0"
-                                                : "bg-zinc-100 text-zinc-400 hover:bg-zinc-200"
+                                            onClick={(e) => handleToggle(entity.id, e)}
+                                            className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all active:scale-95 flex items-center gap-1 ${entity.is_subscribed
+                                                ? "bg-white border border-gray-200 text-gray-500"
+                                                : "bg-primary text-white shadow-lg shadow-primary/30"
                                                 }`}
                                         >
-                                            {entity.is_subscribed ? <Check size={20} strokeWidth={4} /> : <Plus size={20} strokeWidth={4} />}
+                                            {entity.is_subscribed ? (
+                                                <>已订阅</>
+                                            ) : (
+                                                <>
+                                                    <Plus size={12} strokeWidth={3} /> 订阅
+                                                </>
+                                            )}
                                         </button>
                                     </motion.div>
                                 );
                             })
                         )}
                     </AnimatePresence>
+                </div>
+
+                {/* Recommendations Header */}
+                <div className="mt-10 mb-6 flex items-center gap-2">
+                    <span className="text-lg">🔥</span>
+                    <h3 className="font-bold text-gray-900">热门推荐</h3>
+                </div>
+
+                <div className="flex flex-wrap gap-3">
+                    {["LVMH", "苹果 Apple", "NVidia", "SpaceX", "元宇宙", "新能源"].map(tag => (
+                        <button key={tag} className="px-4 py-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-100 transition-colors">
+                            {tag}
+                        </button>
+                    ))}
                 </div>
             </div>
         </div>

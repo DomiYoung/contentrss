@@ -2,10 +2,10 @@ import { Search, ShieldCheck } from "lucide-react";
 import { useMemo } from "react";
 
 export function Header() {
-    const today = useMemo(() => new Date().toLocaleDateString("en-US", {
-        month: "short",
-        day: "2-digit",
-        year: "numeric"
+    const today = useMemo(() => new Date().toLocaleDateString("zh-CN", {
+        month: "long",
+        day: "numeric",
+        weekday: "short"
     }), []);
 
     return (
@@ -13,10 +13,10 @@ export function Header() {
             <div className="flex flex-col">
                 <div className="flex items-center gap-1.5 leading-none mb-0.5">
                     <ShieldCheck size={14} className="text-zinc-900" />
-                    <span className="font-black text-zinc-900 tracking-tighter text-base uppercase">Intelligence OS</span>
+                    <span className="font-black text-zinc-900 tracking-tight text-base">情报中心</span>
                 </div>
                 <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-mono text-zinc-400 font-bold uppercase tracking-widest">{today}</span>
+                    <span className="text-[10px] font-mono text-zinc-400 font-bold tracking-wider">{today}</span>
                     <div className="w-1 h-1 bg-emerald-500 rounded-full animate-pulse" />
                 </div>
             </div>

@@ -12,8 +12,12 @@ export default {
                 ring: "hsl(var(--ring))",
                 background: "hsl(var(--background))",
                 foreground: "hsl(var(--foreground))",
+                "background-light": "#f0f5ff",
+                "background-dark": "#0f172a",
+                "surface-light": "#ffffff",
+                "surface-dark": "#1e293b",
                 primary: {
-                    DEFAULT: "hsl(var(--primary))",
+                    DEFAULT: "#2563eb", // User's requested Blue
                     foreground: "hsl(var(--primary-foreground))",
                 },
                 secondary: {
@@ -45,10 +49,12 @@ export default {
                 lg: "var(--radius)",
                 md: "calc(var(--radius) - 2px)",
                 sm: "calc(var(--radius) - 4px)",
+                "xl": "1.5rem",
+                "2xl": "2rem",
             },
             fontFamily: {
                 sans: ["Inter", "system-ui", "sans-serif"],
-                display: ["Playfair Display", "serif"],
+                display: ["Inter", "sans-serif"], // User requested Inter for display
                 serif: ["Charter", "Georgia", "serif"],
             },
         },

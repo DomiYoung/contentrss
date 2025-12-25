@@ -1,8 +1,8 @@
-import { Home, Radio, User, Newspaper, Database } from "lucide-react";
+import { Home, Radio, User, Newspaper } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { triggerHaptic } from "@/lib/haptic";
 
-type Tab = "home" | "subscribe" | "briefing" | "data" | "profile";
+export type Tab = "home" | "subscribe" | "briefing" | "data" | "profile";
 
 interface BottomNavProps {
     activeTab: Tab;
@@ -10,12 +10,17 @@ interface BottomNavProps {
 }
 
 export function BottomNav({ activeTab, onTabChange }: BottomNavProps) {
+    // 各 Tab 价值定位：
+    // 情报 - 核心阅读入口，浏览 AI 加工后的行业情报
+    // 雷达 - 个性化订阅，追踪关注的公司/行业/话题
+    // 简报 - 每日精华，AI 生成的叙事式简报
+    // 数据 - 元数据源，原始数据浏览（内部工具）
+    // 我的 - 用户中心，设置和账户管理
     const tabs = [
-        { id: "home" as Tab, icon: Home, label: "Feed" },
-        { id: "subscribe" as Tab, icon: Radio, label: "Radar" },
-        { id: "briefing" as Tab, icon: Newspaper, label: "Brief" },
-        { id: "data" as Tab, icon: Database, label: "Data" },
-        { id: "profile" as Tab, icon: User, label: "Me" },
+        { id: "home" as Tab, icon: Home, label: "情报" },
+        { id: "subscribe" as Tab, icon: Radio, label: "雷达" },
+        { id: "briefing" as Tab, icon: Newspaper, label: "内参" },
+        { id: "profile" as Tab, icon: User, label: "我" },
     ];
 
     const handleTabClick = (tabId: Tab) => {

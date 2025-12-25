@@ -25,6 +25,6 @@ export interface DailyBriefingData {
     synthesis: string;
     takeaways: string[];
     top_picks: IntelligenceCardData[];
-    impact_chain: ImpactSegment;
+    impact_chain: any[];
     framework?: Framework;
 }
