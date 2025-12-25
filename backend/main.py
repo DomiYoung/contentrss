@@ -11,6 +11,12 @@ import json
 import requests
 from dotenv import load_dotenv
 from database import init_db
+from datetime import datetime
+import hashlib
+from typing import Any, Dict, List, Optional
+
+from services.entities import EntityService
+from topics import topic_service
 
 # 加载环境变量
 load_dotenv()
@@ -53,6 +59,200 @@ CATEGORY_MAPPING = {
     "ai": "AI",
     "management": "企业管理"
 }
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOCAL_RAW_PATH = os.path.join(BASE_DIR, "data", "raw_articles.json")
+
+entity_service = EntityService()
+
+
+def load_local_articles() -> List[Dict[str, Any]]:
+    if not os.path.exists(LOCAL_RAW_PATH):
+        return []
+    try:
+        with open(LOCAL_RAW_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception as e:
+        print(f"⚠️ 读取本地 raw_articles 失败: {e}")
+        return []
+
+
+def get_raw_articles_by_category() -> Dict[str, List[Dict[str, Any]]]:
+    """统一获取原始文章数据（优先 Special API，失败则回退本地）"""
+    response = fetch_special_data()
+    data = parse_special_response(response)
+
+    if not data:
+        local_items = load_local_articles()
+        return {"insight": local_items}
+
+    if isinstance(data, list):
+        return {"insight": data}
+
+    if isinstance(data, dict):
+        return data
+
+    return {"insight": load_local_articles()}
+
+
+def safe_json(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except Exception:
+            return {}
+    return {}
+
+
+def normalize_article(article: Dict[str, Any], category_key: str) -> Optional[Dict[str, Any]]:
+    fields = article.get("fields", article) if isinstance(article, dict) else {}
+    info = safe_json(fields.get("文章信息") or fields.get("article_info") or fields.get("info"))
+
+    title = info.get("文章标题") or fields.get("文章标题-moss用") or fields.get("title") or ""
+    summary = info.get("摘要") or fields.get("摘要") or fields.get("summary") or ""
+    content = fields.get("文章内容") or fields.get("content") or summary or ""
+    source_name = info.get("作者名称") or fields.get("source_name") or fields.get("source") or ""
+    source_url = info.get("文章URL") or fields.get("source_url") or fields.get("url")
+    raw_id = fields.get("自增ID") or fields.get("id") or fields.get("article_id")
+
+    if not title:
+        return None
+
+    try:
+        article_id = int(raw_id) if raw_id is not None else None
+    except Exception:
+        article_id = None
+
+    if article_id is None:
+        id_source = f"{title}|{source_url or ''}"
+        article_id = int(hashlib.md5(id_source.encode("utf-8")).hexdigest()[:8], 16)
+
+    return {
+        "id": article_id,
+        "title": title,
+        "summary": summary,
+        "content": content,
+        "source_name": source_name,
+        "source_url": source_url,
+        "category_key": category_key,
+    }
+
+
+def build_summary_payload(analysis: Dict[str, Any], raw_summary: str) -> str:
+    polarity = analysis.get("polarity", "neutral")
+    sentiment = "neutral"
+    if polarity == "positive":
+        sentiment = "bullish"
+    elif polarity == "negative":
+        sentiment = "bearish"
+
+    thesis = analysis.get("opinion") or analysis.get("fact") or raw_summary or "暂无摘要"
+    facts = []
+    if analysis.get("fact"):
+        facts.append(analysis["fact"])
+    if raw_summary and raw_summary not in facts:
+        facts.append(raw_summary)
+
+    payload = {
+        "thesis": thesis,
+        "facts": facts[:3],
+        "sentiment": sentiment
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def build_intelligence_cards(limit: int = 20, skip_ai: bool = False) -> List[Dict[str, Any]]:
+    data = get_raw_articles_by_category()
+    cards: List[Dict[str, Any]] = []
+    index = 0
+
+    for category_key, articles in data.items():
+        if not isinstance(articles, list):
+            continue
+
+        for article in articles[:3]:
+            normalized = normalize_article(article, category_key)
+            if not normalized:
+                continue
+
+            index += 1
+            article_id = normalized["id"] or index
+
+            if skip_ai:
+                analysis = {
+                    "polarity": "neutral",
+                    "impacts": [],
+                    "tags": [],
+                    "opinion": ""
+                }
+            else:
+                analysis = analyze_article(normalized["title"], normalized["summary"])
+
+            tags = analysis.get("tags") or []
+            if category_key:
+                category_label = CATEGORY_MAPPING.get(category_key, category_key)
+                if category_label not in tags:
+                    tags.append(category_label)
+
+            cards.append({
+                "id": article_id,
+                "title": normalized["title"],
+                "polarity": analysis.get("polarity", "neutral"),
+                "fact": analysis.get("fact") or normalized["summary"],
+                "impacts": analysis.get("impacts", []),
+                "opinion": analysis.get("opinion", ""),
+                "tags": tags,
+                "source_name": normalized["source_name"],
+                "source_url": normalized["source_url"]
+            })
+
+            if len(cards) >= limit:
+                return cards
+
+    return cards
+
+
+def find_article_by_id(article_id: int) -> Optional[Dict[str, Any]]:
+    data = get_raw_articles_by_category()
+    for category_key, articles in data.items():
+        if not isinstance(articles, list):
+            continue
+        for article in articles:
+            normalized = normalize_article(article, category_key)
+            if not normalized:
+                continue
+            if normalized["id"] is not None and str(normalized["id"]) == str(article_id):
+                return normalized
+    return None
+
+
+def build_daily_briefing(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
+    now = datetime.now()
+    takeaways = [card.get("fact") for card in cards[:3] if card.get("fact")]
+    read_time = f"{max(3, len(cards) * 2)} min read"
+
+    impact_chain = {
+        "trigger": cards[0]["title"] if cards else "今日暂无重点情报",
+        "path": [
+            f"{impact.get('entity')} {impact.get('trend')}"
+            for impact in (cards[0].get("impacts", []) if cards else [])[:3]
+        ] or ["等待更多数据"],
+        "conclusion": cards[0].get("opinion") if cards else "稍后再试"
+    }
+
+    return {
+        "date": now.strftime("%Y-%m-%d"),
+        "title": "Daily Intelligence Briefing",
+        "subtitle": "Today's five signals you should not miss.",
+        "read_time": read_time,
+        "synthesis": "基于今日高信号情报，系统已完成结构化筛选与影响链推演。",
+        "takeaways": takeaways,
+        "top_picks": cards,
+        "impact_chain": impact_chain
+    }
 
 
 def fetch_special_data(content: str = "内容") -> dict:
@@ -164,14 +364,10 @@ def health():
 def get_raw_data():
     """获取原始公众号数据（数据中心用）"""
     category = request.args.get('category', 'legal')
-    
-    # 获取数据
-    response = fetch_special_data()
-    data = parse_special_response(response)
-    
-    # 按分类筛选
+
+    data = get_raw_articles_by_category()
     items = data.get(category, [])
-    
+
     return jsonify({
         "category": category,
         "label": CATEGORY_MAPPING.get(category, category),
@@ -185,76 +381,62 @@ def get_intelligence():
     """获取 AI 分析后的情报卡片（首页用）"""
     limit = int(request.args.get('limit', 20))
     skip_ai = request.args.get('skip_ai', 'false').lower() == 'true'
-    
-    # 获取数据
-    response = fetch_special_data()
-    data = parse_special_response(response)
-    
-    cards = []
-    
-    # 从各分类取数据
-    for category_key, articles in data.items():
-        if not isinstance(articles, list):
-            continue
-        
-        for idx, article in enumerate(articles[:3]):  # 每分类最多 3 条
-            fields = article.get('fields', {})
-            
-            # 解析文章信息
-            title = fields.get('文章标题-moss用', '')
-            summary = ''
-            source_name = ''
-            source_url = ''
-            
-            article_info = fields.get('文章信息', '')
-            if article_info:
-                try:
-                    info = json.loads(article_info)
-                    title = info.get('文章标题', title)
-                    summary = info.get('摘要', '')
-                    source_name = info.get('作者名称', '')
-                    source_url = info.get('文章URL', '')
-                except:
-                    pass
-            
-            if not title:
-                continue
-            
-            # AI 分析
-            if skip_ai:
-                analysis = {
-                    "polarity": "neutral",
-                    "impacts": [],
-                    "tags": [CATEGORY_MAPPING.get(category_key, category_key)],
-                    "actionable_insight": ""
-                }
-            else:
-                analysis = analyze_article(title, summary)
-                analysis['tags'] = analysis.get('tags', []) + [CATEGORY_MAPPING.get(category_key, category_key)]
-            
-            card = {
-                "id": fields.get('自增ID', len(cards)),
-                "title": title,
-                "polarity": analysis.get('polarity', 'neutral'),
-                "fact": analysis.get('fact', summary), # 优先使用 AI 提炼的事实
-                "impacts": analysis.get('impacts', []),
-                "opinion": analysis.get('opinion', ''), # 匹配 analyst_v1.md 的输出
-                "tags": analysis.get('tags', []),
-                "source_name": source_name,
-                "source_url": source_url
-            }
-            
-            cards.append(card)
-            
-            if len(cards) >= limit:
-                break
-        
-        if len(cards) >= limit:
-            break
-    
+
+    cards = build_intelligence_cards(limit=limit, skip_ai=skip_ai)
+
     return jsonify({
         "count": len(cards),
         "cards": cards
+    })
+
+
+@app.route('/api/feed', methods=['GET'])
+def get_feed():
+    """兼容旧前端的 Feed 接口（返回数组）"""
+    limit = int(request.args.get('limit', 20))
+    skip_ai = request.args.get('skip_ai', 'false').lower() == 'true'
+    cards = build_intelligence_cards(limit=limit, skip_ai=skip_ai)
+    return jsonify(cards)
+
+
+@app.route('/api/article/<int:article_id>', methods=['GET'])
+def get_article_detail(article_id: int):
+    """获取详情页数据（与 /api/intelligence 同源）"""
+    skip_ai = request.args.get('skip_ai', 'false').lower() == 'true'
+    article = find_article_by_id(article_id)
+    if not article:
+        return jsonify({"error": "Article not found"}), 404
+
+    if skip_ai:
+        analysis = {
+            "polarity": "neutral",
+            "impacts": [],
+            "tags": [],
+            "opinion": ""
+        }
+    else:
+        analysis = analyze_article(article["title"], article["summary"])
+
+    tags = analysis.get("tags") or []
+    category_label = CATEGORY_MAPPING.get(article["category_key"], article["category_key"])
+    if category_label and category_label not in tags:
+        tags.append(category_label)
+
+    summary_payload = build_summary_payload(analysis, article["summary"])
+
+    return jsonify({
+        "id": article["id"],
+        "title": article["title"],
+        "polarity": analysis.get("polarity", "neutral"),
+        "fact": analysis.get("fact") or article["summary"],
+        "impacts": analysis.get("impacts", []),
+        "opinion": analysis.get("opinion", ""),
+        "tags": tags,
+        "source_name": article["source_name"],
+        "source_url": article["source_url"],
+        "content": article["content"],
+        "summary": summary_payload,
+        "original_url": article["source_url"]
     })
 
 
@@ -297,6 +479,37 @@ def get_article_tags(article_id):
             {"id": "ai_信用修复", "name": "信用修复", "level": "ai", "color": "#71717A"},
         ]
     })
+
+
+@app.route('/api/entities', methods=['GET'])
+def get_entities():
+    """获取实体雷达列表"""
+    entities = entity_service.get_entities()
+    result = []
+    for entity in entities:
+        if hasattr(entity, "model_dump"):
+            result.append(entity.model_dump())
+        elif hasattr(entity, "dict"):
+            result.append(entity.dict())
+        else:
+            result.append(entity)
+    return jsonify(result)
+
+
+@app.route('/api/entities/toggle/<entity_id>', methods=['POST'])
+def toggle_entity_subscription(entity_id: str):
+    """订阅/取消订阅实体"""
+    is_subscribed = entity_service.toggle_subscription(entity_id)
+    return jsonify({"entity_id": entity_id, "is_subscribed": is_subscribed})
+
+
+@app.route('/api/briefing/daily', methods=['GET'])
+def get_daily_briefing():
+    """生成每日简报（与情报卡片同源）"""
+    limit = int(request.args.get('limit', 5))
+    skip_ai = request.args.get('skip_ai', 'false').lower() == 'true'
+    cards = build_intelligence_cards(limit=limit, skip_ai=skip_ai)
+    return jsonify(build_daily_briefing(cards))
 
 
 # ============ Topics / Fortress API ============

@@ -24,6 +24,9 @@
 - 实施计划：`docs/v2-design/implementation_plan.md`
 - 交付总结：`docs/v2-design/walkthrough.md`
 
+**后端与数据规范**
+- Supabase API + DB 设计：`docs/backend/api-db-spec.md`
+
 **功能级 Specs**
 - 情报引擎：`specs/001-intelligence-engine/spec.md`
 - 详情页与传播：`specs/002-detail-and-viral/spec.md`
