@@ -1,33 +1,69 @@
 import sqlite3
 import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
-# Use absolute path relative to this file
+# 使用绝对路径，确保在不同运行环境下都能找到数据库文件
+# 优先从环境变量读取，否则回退到项目根目录
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, 'contentrss.db')
-SCHEMA_PATH = os.path.join(BASE_DIR, 'schema.sql')
+DB_URL = os.getenv('DATABASE_URL', os.path.join(BASE_DIR, 'contentrss.db'))
+
+def is_postgres():
+    return DB_URL.startswith('postgres://') or DB_URL.startswith('postgresql://')
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def init_db():
-    if os.path.exists(DB_PATH):
-        return
+    if is_postgres():
+        conn = psycopg2.connect(DB_URL, cursor_factory=RealDictCursor)
+        # PostgreSQL 不需要显式设置 row_factory，RealDictCursor 已经处理了
+        return conn
+    else:
+        # 兼容 SQLite
+        sqlite_path = DB_URL
+        if sqlite_path.startswith('sqlite:///'):
+            sqlite_path = sqlite_path.replace('sqlite:///', '')
         
-    print(f"Initializing database from {SCHEMA_PATH}...")
-    with get_db_connection() as conn:
-        with open(SCHEMA_PATH, 'r') as f:
-            # Simple SQL splitting might fail on complex schemas (like triggers or functions)
-            # But for this schema it should be fine if we handle comments and semicolons carefully.
-            # Assuming schema.sql is SQLite compatible (removed AUTO_INCREMENT, MySQL specific syntax if any)
-            
-            # The schema.sql has MySQL syntax (AUTO_INCREMENT, COMMENT). 
-            # We need to adapt it slightly for SQLite or write a converter.
-            # For MVP speed, I will use a simplified SQLite schema initialization logic here.
-            pass
+        conn = sqlite3.connect(sqlite_path)
+        conn.row_factory = sqlite3.Row
+        return conn
 
-# SQLite compatible schema definition strings for the purpose of this script
+def get_placeholder():
+    """返回当前数据库引擎对应的占位符"""
+    return "%s" if is_postgres() else "?"
+
+# PostgreSQL 兼容的 Schema 定义
+PG_SCHEMA = """
+CREATE TABLE IF NOT EXISTS topics (
+    id SERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT,
+    status TEXT DEFAULT 'active',
+    current_version TEXT DEFAULT '0.1',
+    channel_key TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS topic_evidences (
+    id SERIAL PRIMARY KEY,
+    topic_id INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+    highlight_text TEXT,
+    note TEXT,
+    source_title TEXT,
+    source_url TEXT,
+    confidence TEXT DEFAULT 'high',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS topic_updates (
+    id SERIAL PRIMARY KEY,
+    topic_id INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+    version TEXT NOT NULL,
+    content TEXT,
+    change_log TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
 SQLITE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS topics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,24 +99,31 @@ CREATE TABLE IF NOT EXISTS topic_updates (
 );
 """
 
-def init_sqlite_db():
-    with get_db_connection() as conn:
-        conn.executescript(SQLITE_SCHEMA)
-        
-        # Insert demo topics if empty
+def init_db():
+    schema = PG_SCHEMA if is_postgres() else SQLITE_SCHEMA
+    conn = get_db_connection()
+    try:
         cur = conn.cursor()
+        if is_postgres():
+            cur.execute(schema)
+        else:
+            cur.executescript(schema)
+        conn.commit()
+        
+        # 插入演示数据 (如果表为空)
         cur.execute("SELECT count(*) FROM topics")
         if cur.fetchone()[0] == 0:
-            cur.execute("""
-                INSERT INTO topics (title, description, channel_key) 
-                VALUES ('玻色因国产化进程', '追踪玻色因原料成本下降后的市场格局变化', 'beauty_alpha')
-            """)
-            cur.execute("""
-                INSERT INTO topics (title, description, channel_key) 
-                VALUES ('李佳琦直播间选品逻辑', '分析头部主播对新锐品牌的选品偏好变化', 'beauty_alpha')
-            """)
+            placeholder = get_placeholder()
+            cur.execute(f"INSERT INTO topics (title, description, channel_key) VALUES ({placeholder}, {placeholder}, {placeholder})", 
+                       ('玻色因国产化进程', '追踪玻色因原料成本下降后的市场格局变化', 'beauty_alpha'))
+            cur.execute(f"INSERT INTO topics (title, description, channel_key) VALUES ({placeholder}, {placeholder}, {placeholder})", 
+                       ('李佳琦直播间选品逻辑', '分析头部主播对新锐品牌的选品偏好变化', 'beauty_alpha'))
             conn.commit()
-            print("Initialized demo topics.")
+            print("✓ Database initialized with demo data.")
+    except Exception as e:
+        print(f"❌ Database initialization failed: {e}")
+    finally:
+        conn.close()
 
 if __name__ == '__main__':
-    init_sqlite_db()
+    init_db()

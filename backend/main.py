@@ -9,8 +9,8 @@ from openai import OpenAI
 import os
 import json
 import requests
-from topics import topic_service
 from dotenv import load_dotenv
+from database import init_db
 
 # 加载环境变量
 load_dotenv()
@@ -37,7 +37,10 @@ ai_client = OpenAI(
 
 # 创建 Flask 应用
 app = Flask(__name__)
-CORS(app)  # 允许跨域
+
+# 生产环境 CORS 配置
+PROD_ORIGINS = os.getenv('ALLOWED_ORIGINS', '*').split(',')
+CORS(app, origins=PROD_ORIGINS)
 
 # 分类映射
 CATEGORY_MAPPING = {
@@ -342,9 +345,17 @@ def add_evidence(topic_id):
 # ============ 启动 ============
 
 if __name__ == '__main__':
+    # 全量初始化 (支持 SQLite 或 PostgreSQL)
+    from database import init_db
+    init_db()
+    
     print(f"✓ AI 模型: {DEFAULT_MODEL}")
     print(f"✓ AI 接口: {OPENAI_BASE_URL}")
     print(f"✓ Special 接口: {SPECIAL_API_URL}")
-    print(f"\n🚀 服务启动: http://0.0.0.0:8000\n")
+    print(f"\n🚀 本地调试启动: http://0.0.0.0:8000\n")
     
     app.run(host='0.0.0.0', port=8000, debug=True)
+else:
+    # 生产环境 (Gunicorn 启动) 初始化
+    from database import init_db
+    init_db()
