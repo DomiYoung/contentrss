@@ -111,8 +111,8 @@ export async function fetchSpecialChat(content: string, chainId: number = 1036, 
     });
 }
 
-// 兼容旧接口
-const API_BASE = "/api";
+// 统一使用后端基础地址
+const API_BASE = `${BACKEND_BASE_URL}/api`;
 
 export async function fetchFeed(): Promise<IntelligenceCardData[]> {
     return request(`${API_BASE}/feed`);
