@@ -10,10 +10,12 @@ import os
 import json
 import requests
 from dotenv import load_dotenv
-from database import init_db, get_db_connection, get_placeholder
 from datetime import datetime
+from database import init_db, get_db_connection, get_placeholder
 import hashlib
 from typing import Any, Dict, List, Optional
+from psycopg2.extras import execute_values
+from psycopg2.pool import ThreadedConnectionPool
 
 from services.entities import EntityService
 from services.tag_service import tag_service
@@ -61,6 +63,42 @@ def get_category_label(category_key: str) -> str:
     return mapping.get(category_key, category_key)
 
 
+# ========== 数据库连接池 ==========
+# 放在全局，避免每次请求都建立 TLS 连接
+DB_URL = os.getenv('DATABASE_URL')
+_db_pool = None
+
+def get_pool():
+    global _db_pool
+    if _db_pool is None:
+        print("💡 初始化数据库连接池...")
+        _db_pool = ThreadedConnectionPool(1, 10, DB_URL, sslmode='require')
+    return _db_pool
+
+def get_pooled_connection():
+    pool = get_pool()
+    return pool.getconn()
+
+def release_pooled_connection(conn):
+    pool = get_pool()
+    pool.putconn(conn)
+
+from contextlib import contextmanager
+
+@contextmanager
+def db_conn():
+    conn = get_pooled_connection()
+    # 确保返回字典结构的 cursor
+    from psycopg2.extras import RealDictCursor
+    conn.cursor_factory = RealDictCursor
+    try:
+        yield conn
+    finally:
+        release_pooled_connection(conn)
+
+# ================================
+
+
 entity_service = EntityService()
 
 
@@ -73,25 +111,36 @@ def _coerce_special_payload(data: Any) -> Dict[str, List[Dict[str, Any]]]:
 
 
 def get_raw_articles_by_category() -> Dict[str, List[Dict[str, Any]]]:
-    """统一获取所有分类的原始文章数据（合并查询以减少 RTT 延迟）"""
+    """统一获取所有分类的原始文章数据（极致优化：缓存命中仅 1 次 RTT）"""
     category_keys = list(get_category_mapping().keys())
     
-    # 1. 批量检查同步状态 (单次 RTT)
-    synced_keys = get_all_synced_recently(category_keys)
-    needs_sync_keys = [key for key in category_keys if key not in synced_keys]
+    # 1. 单次查询获取数据 + 状态
+    db_data, last_sync_map = fetch_all_raw_articles_with_metadata(category_keys)
     
-    # 2. 如果有分类需要同步，调 Special API
+    # 2. 检查同步需求
+    now = datetime.now()
+    needs_sync_keys = [k for k in category_keys if not last_sync_map.get(k) or (now - last_sync_map[k]).total_seconds() > 12 * 3600]
+    
     if needs_sync_keys:
-        print(f"🔄 需要同步的分类: {needs_sync_keys}")
-        response = fetch_special_data()
-        data = _coerce_special_payload(parse_special_response(response))
-        for key in needs_sync_keys:
-            items = data.get(key) or []
-            if items:
-                persist_raw_items(key, items)
+        print(f"🔄 需要同步: {needs_sync_keys}")
+        try:
+            response = fetch_special_data()
+            sync_data = _coerce_special_payload(parse_special_response(response))
+            for key in needs_sync_keys:
+                items = sync_data.get(key) or []
+                if items:
+                    persist_raw_items(key, items)
+            # 只有同步发生时才进行第二次查询
+            db_data, _ = fetch_all_raw_articles_with_metadata(category_keys)
+        except Exception as e:
+            print(f"⚠️ 同步失败: {e}")
 
-    # 3. 单次 SQL 查询所有分类的文章 (单次 RTT)
-    return fetch_all_raw_articles_from_db(category_keys)
+    return db_data
+
+def get_articles_for_category(category_key: str) -> List[Dict[str, Any]]:
+    """获取单分类数据（复用批量逻辑以节省连接）"""
+    data = get_raw_articles_by_category()
+    return data.get(category_key, [])
 
 
 def fetch_special_category_items(category_key: str) -> List[Dict[str, Any]]:
@@ -109,31 +158,32 @@ def _row_value(row: Any, key: str) -> Any:
         return None
 
 
-def fetch_all_raw_articles_from_db(category_keys: List[str], limit_per_cat: int = 40) -> Dict[str, List[Dict[str, Any]]]:
-    """批量从数据库读取文章，减少网络往返"""
+def fetch_all_raw_articles_with_metadata(category_keys: List[str], limit_per_cat: int = 40) -> tuple[Dict[str, List[Dict[str, Any]]], Dict[str, datetime]]:
+    """批量从数据库读取文章和最新的同步时间"""
     try:
         if not category_keys:
-            return {}
+            return {}, {}
             
-        # 使用窗口函数在单次查询中按分类取前 N 条（PostgreSQL 语法）
         placeholders = ", ".join(["%s"] * len(category_keys))
         query = f"""
             WITH ranked_articles AS (
                 SELECT 
                     category_key, 
                     raw_payload,
+                    ingested_at,
                     ROW_NUMBER() OVER(PARTITION BY category_key ORDER BY ingested_at DESC) as rank
                 FROM raw_articles
                 WHERE category_key IN ({placeholders})
             )
-            SELECT category_key, raw_payload
+            SELECT category_key, raw_payload, ingested_at, rank
             FROM ranked_articles
             WHERE rank <= %s
         """
         
         db_data: Dict[str, List[Dict[str, Any]]] = {key: [] for key in category_keys}
+        last_sync_map: Dict[str, datetime] = {}
         
-        with get_db_connection() as conn:
+        with db_conn() as conn:
             cur = conn.cursor()
             cur.execute(query, (*category_keys, limit_per_cat))
             rows = cur.fetchall()
@@ -141,6 +191,12 @@ def fetch_all_raw_articles_from_db(category_keys: List[str], limit_per_cat: int 
         for row in rows:
             cat = row["category_key"]
             payload = row["raw_payload"]
+            ingested_at = row["ingested_at"]
+            rank = row["rank"]
+            
+            # 记录该分类最新的同步时间（rank=1 的即为最新）
+            if rank == 1:
+                last_sync_map[cat] = ingested_at
             
             if isinstance(payload, str):
                 try:
@@ -151,39 +207,22 @@ def fetch_all_raw_articles_from_db(category_keys: List[str], limit_per_cat: int 
             if isinstance(payload, dict):
                 db_data[cat].append(payload)
                 
-        return db_data
+        return db_data, last_sync_map
     except Exception as e:
         print(f"⚠️ 批量读取 raw_articles 失败: {e}")
-        return {}
+        return {}, {}
 
 
 def get_all_synced_recently(category_keys: List[str], hours: int = 12) -> List[str]:
     """批量检查哪些分类在最近 N 小时内同步过"""
-    try:
-        if not category_keys:
-            return []
-            
-        placeholders = ", ".join(["%s"] * len(category_keys))
-        # 找出最近 N 小时内有数据的分类
-        query = f"""
-            SELECT DISTINCT category_key 
-            FROM raw_articles 
-            WHERE category_key IN ({placeholders}) 
-            AND ingested_at > NOW() - INTERVAL '{hours} hours'
-        """
-        
-        with get_db_connection() as conn:
-            cur = conn.cursor()
-            cur.execute(query, category_keys)
-            rows = cur.fetchall()
-            
-        return [row["category_key"] for row in rows]
-    except Exception as e:
-        print(f"⚠️ 批量检查同步状态失败: {e}")
-        return []
+    _, last_sync_map = fetch_all_raw_articles_with_metadata(category_keys, limit_per_cat=1)
+    now = datetime.now()
+    return [k for k, v in last_sync_map.items() if (now - v).total_seconds() < hours * 3600]
 
 
 def is_synced_recently(category_key: str, hours: int = 12) -> bool:
+    """单个检查（保留兼容性，但推荐用批量版）"""
+    return category_key in get_all_synced_recently([category_key], hours)
     """单个检查（保留兼容性，但推荐用批量版）"""
     return category_key in get_all_synced_recently([category_key], hours)
 
@@ -208,45 +247,52 @@ def get_articles_for_category(category_key: str) -> List[Dict[str, Any]]:
 
 
 def persist_raw_items(category_key: str, items: List[Dict[str, Any]]) -> None:
+    """批量保存文章，显著减少网络往返次数"""
     if not items:
         return
     try:
-        placeholder = get_placeholder()
-        with get_db_connection() as conn:
-            cur = conn.cursor()
-            for item in items:
-                normalized = normalize_article(item, category_key)
-                if not normalized:
-                    continue
-                payload = json.dumps(item, ensure_ascii=False)
+        data_to_insert = []
+        for item in items:
+            normalized = normalize_article(item, category_key)
+            if not normalized:
+                continue
+            payload = json.dumps(item, ensure_ascii=False)
+            data_to_insert.append((
+                normalized["source_name"],
+                normalized["source_url"],
+                normalized["title"],
+                normalized["summary"],
+                normalized["content"],
+                category_key,
+                payload,
+                None # published_at
+            ))
 
-                query = (
-                    "INSERT INTO raw_articles "
-                    "(source_name, source_url, title, summary, content, category_key, raw_payload, published_at) "
-                    f"VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}) "
-                    "ON CONFLICT (source_url) DO UPDATE SET "
-                    "source_name = EXCLUDED.source_name, "
-                    "title = EXCLUDED.title, "
-                    "summary = EXCLUDED.summary, "
-                    "content = EXCLUDED.content, "
-                    "category_key = EXCLUDED.category_key, "
-                    "raw_payload = EXCLUDED.raw_payload, "
-                    "published_at = EXCLUDED.published_at, "
-                    "ingested_at = CURRENT_TIMESTAMP"
-                )
-                cur.execute(query, (
-                    normalized["source_name"],
-                    normalized["source_url"],
-                    normalized["title"],
-                    normalized["summary"],
-                    normalized["content"],
-                    category_key,
-                    payload,
-                    None
-                ))
+        if not data_to_insert:
+            return
+
+        query = """
+            INSERT INTO raw_articles 
+            (source_name, source_url, title, summary, content, category_key, raw_payload, published_at) 
+            VALUES %s
+            ON CONFLICT (source_url) DO UPDATE SET 
+            source_name = EXCLUDED.source_name, 
+            title = EXCLUDED.title, 
+            summary = EXCLUDED.summary, 
+            content = EXCLUDED.content, 
+            category_key = EXCLUDED.category_key, 
+            raw_payload = EXCLUDED.raw_payload, 
+            published_at = EXCLUDED.published_at, 
+            ingested_at = CURRENT_TIMESTAMP
+        """
+
+        with db_conn() as conn:
+            cur = conn.cursor()
+            execute_values(cur, query, data_to_insert)
             conn.commit()
+            print(f"✅ 已存入 {len(data_to_insert)} 条数据到分类 {category_key}")
     except Exception as e:
-        print(f"⚠️ 保存 raw_articles 失败: {e}")
+        print(f"⚠️ 批量保存 raw_articles 失败: {e}")
 
 
 def safe_json(value: Any) -> Dict[str, Any]:
