@@ -127,8 +127,8 @@ CREATE TABLE IF NOT EXISTS raw_articles (
 
 def init_db():
     schema = PG_SCHEMA if is_postgres() else SQLITE_SCHEMA
-    conn = get_db_connection()
     try:
+        conn = get_db_connection()
         cur = conn.cursor()
         if is_postgres():
             cur.execute(schema)
@@ -137,8 +137,10 @@ def init_db():
         conn.commit()
         
         # 插入演示数据 (如果表为空)
-        cur.execute("SELECT count(*) FROM topics")
-        if cur.fetchone()[0] == 0:
+        cur.execute("SELECT count(*) as cnt FROM topics")
+        row = cur.fetchone()
+        count = row['cnt'] if isinstance(row, dict) else row[0]
+        if count == 0:
             placeholder = get_placeholder()
             cur.execute(f"INSERT INTO topics (title, description, channel_key) VALUES ({placeholder}, {placeholder}, {placeholder})", 
                        ('玻色因国产化进程', '追踪玻色因原料成本下降后的市场格局变化', 'beauty_alpha'))
@@ -146,10 +148,12 @@ def init_db():
                        ('李佳琦直播间选品逻辑', '分析头部主播对新锐品牌的选品偏好变化', 'beauty_alpha'))
             conn.commit()
             print("✓ Database initialized with demo data.")
-    except Exception as e:
-        print(f"❌ Database initialization failed: {e}")
-    finally:
+        else:
+            print(f"✓ Database connected. Topics count: {count}")
         conn.close()
+    except Exception as e:
+        print(f"❌ Database initialization failed: {type(e).__name__}: {e}")
+
 
 if __name__ == '__main__':
     init_db()
