@@ -152,6 +152,23 @@ CREATE TABLE IF NOT EXISTS topic_updates (
 );
 
 -- ============================================================
+-- 8. 原始文章表（Special 同步落库）
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS raw_articles (
+    id              BIGSERIAL PRIMARY KEY,
+    source_name     TEXT,
+    source_url      TEXT UNIQUE,
+    title           TEXT,
+    summary         TEXT,
+    content         TEXT,
+    category_key    TEXT,
+    raw_payload     JSONB,
+    published_at    TIMESTAMP,
+    ingested_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ============================================================
 -- 演示数据（可选）
 -- ============================================================
 

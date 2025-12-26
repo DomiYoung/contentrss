@@ -1,38 +1,59 @@
-import sqlite3
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from dotenv import load_dotenv
 
-# 使用绝对路径，确保在不同运行环境下都能找到数据库文件
-# 优先从环境变量读取，否则回退到项目根目录
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_URL = os.getenv('DATABASE_URL', os.path.join(BASE_DIR, 'contentrss.db'))
+# 确保环境变量加载（无论从哪个入口导入）
+load_dotenv()
 
-def is_postgres():
-    return DB_URL.startswith('postgres://') or DB_URL.startswith('postgresql://')
+# 仅支持 Supabase / PostgreSQL
+DB_URL = os.getenv('DATABASE_URL')
+if not DB_URL:
+    raise RuntimeError("缺少 DATABASE_URL 配置（仅支持 Supabase/PostgreSQL）")
+if not (DB_URL.startswith('postgres://') or DB_URL.startswith('postgresql://')):
+    raise RuntimeError("DATABASE_URL 必须是 postgres:// 或 postgresql://")
+
+print("📦 Database: PostgreSQL (Supabase)")
 
 def get_db_connection():
-    if is_postgres():
-        # Supabase 需要 SSL 连接
-        conn = psycopg2.connect(DB_URL, cursor_factory=RealDictCursor, sslmode='require')
-        return conn
-
-    else:
-        # 兼容 SQLite
-        sqlite_path = DB_URL
-        if sqlite_path.startswith('sqlite:///'):
-            sqlite_path = sqlite_path.replace('sqlite:///', '')
-        
-        conn = sqlite3.connect(sqlite_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+    # Supabase 需要 SSL 连接
+    return psycopg2.connect(DB_URL, cursor_factory=RealDictCursor, sslmode='require')
 
 def get_placeholder():
-    """返回当前数据库引擎对应的占位符"""
-    return "%s" if is_postgres() else "?"
+    """返回 PostgreSQL 占位符"""
+    return "%s"
 
-# PostgreSQL 兼容的 Schema 定义
+# PostgreSQL 兼容的 Schema 定义（运行时最小集合）
 PG_SCHEMA = """
+CREATE TABLE IF NOT EXISTS tags (
+    id SERIAL PRIMARY KEY,
+    tag_key VARCHAR(50) UNIQUE NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    level VARCHAR(20) NOT NULL CHECK (level IN ('category', 'ai', 'user')),
+    icon VARCHAR(10),
+    color VARCHAR(20) DEFAULT '#71717A',
+    usage_count INT DEFAULT 0,
+    created_by INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO tags (tag_key, name, level, icon, color) VALUES
+('legal', '法律法规', 'category', '⚖️', '#6366F1'),
+('digital', '数字化', 'category', '💻', '#0EA5E9'),
+('brand', '品牌', 'category', '💎', '#EC4899'),
+('rd', '新品研发', 'category', '🧪', '#8B5CF6'),
+('global', '国际形势', 'category', '🌍', '#14B8A6'),
+('insight', '行业洞察', 'category', '📊', '#F59E0B'),
+('ai', 'AI', 'category', '🤖', '#10B981'),
+('management', '企业管理', 'category', '📋', '#64748B')
+ON CONFLICT (tag_key) DO NOTHING;
+
+INSERT INTO tags (tag_key, name, level, icon, color) VALUES
+('important', '重要', 'user', '⭐', '#F59E0B'),
+('follow_up', '待跟进', 'user', '📌', '#EF4444'),
+('archived', '已归档', 'user', '📁', '#94A3B8')
+ON CONFLICT (tag_key) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS topics (
     id SERIAL PRIMARY KEY,
     title TEXT NOT NULL,
@@ -78,63 +99,11 @@ CREATE TABLE IF NOT EXISTS raw_articles (
 );
 """
 
-SQLITE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS topics (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    description TEXT,
-    status TEXT DEFAULT 'active',
-    current_version TEXT DEFAULT '0.1',
-    channel_key TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS topic_evidences (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    topic_id INTEGER NOT NULL,
-    highlight_text TEXT,
-    note TEXT,
-    source_title TEXT,
-    source_url TEXT,
-    confidence TEXT DEFAULT 'high',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (topic_id) REFERENCES topics(id)
-);
-
-CREATE TABLE IF NOT EXISTS topic_updates (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    topic_id INTEGER NOT NULL,
-    version TEXT NOT NULL,
-    content TEXT,
-    change_log TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (topic_id) REFERENCES topics(id)
-);
-
-CREATE TABLE IF NOT EXISTS raw_articles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_name TEXT,
-    source_url TEXT UNIQUE,
-    title TEXT,
-    summary TEXT,
-    content TEXT,
-    category_key TEXT,
-    raw_payload TEXT,
-    published_at TIMESTAMP,
-    ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-"""
-
 def init_db():
-    schema = PG_SCHEMA if is_postgres() else SQLITE_SCHEMA
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        if is_postgres():
-            cur.execute(schema)
-        else:
-            cur.executescript(schema)
+        cur.execute(PG_SCHEMA)
         conn.commit()
         
         # 插入演示数据 (如果表为空)

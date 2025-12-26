@@ -10,7 +10,7 @@ import os
 import json
 import requests
 from dotenv import load_dotenv
-from database import init_db, get_db_connection, get_placeholder, is_postgres
+from database import init_db, get_db_connection, get_placeholder
 from datetime import datetime
 import hashlib
 from typing import Any, Dict, List, Optional
@@ -61,62 +61,43 @@ def get_category_label(category_key: str) -> str:
     return mapping.get(category_key, category_key)
 
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOCAL_RAW_PATH = os.path.join(BASE_DIR, "data", "raw_articles.json")
-
 entity_service = EntityService()
 
 
-def load_local_articles() -> List[Dict[str, Any]]:
-    if not os.path.exists(LOCAL_RAW_PATH):
-        return []
-    try:
-        with open(LOCAL_RAW_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, list) else []
-    except Exception as e:
-        print(f"⚠️ 读取本地 raw_articles 失败: {e}")
-        return []
+def _coerce_special_payload(data: Any) -> Dict[str, List[Dict[str, Any]]]:
+    if isinstance(data, list):
+        return {"insight": data}
+    if isinstance(data, dict):
+        return {k: v for k, v in data.items() if isinstance(v, list)}
+    return {}
 
 
 def get_raw_articles_by_category() -> Dict[str, List[Dict[str, Any]]]:
-    """统一获取原始文章数据（优先读库，空再拉 Special，最后回退本地）"""
-    db_data: Dict[str, List[Dict[str, Any]]] = {}
-    for category_key in get_category_mapping().keys():
-        items = fetch_raw_articles_from_db(category_key)
-        if items:
-            db_data[category_key] = items
+    """统一获取所有分类的原始文章数据（合并查询以减少 RTT 延迟）"""
+    category_keys = list(get_category_mapping().keys())
+    
+    # 1. 批量检查同步状态 (单次 RTT)
+    synced_keys = get_all_synced_recently(category_keys)
+    needs_sync_keys = [key for key in category_keys if key not in synced_keys]
+    
+    # 2. 如果有分类需要同步，调 Special API
+    if needs_sync_keys:
+        print(f"🔄 需要同步的分类: {needs_sync_keys}")
+        response = fetch_special_data()
+        data = _coerce_special_payload(parse_special_response(response))
+        for key in needs_sync_keys:
+            items = data.get(key) or []
+            if items:
+                persist_raw_items(key, items)
 
-    if db_data:
-        return db_data
-
-    response = fetch_special_data()
-    data = parse_special_response(response)
-
-    if not data:
-        local_items = load_local_articles()
-        return {"insight": local_items}
-
-    if isinstance(data, list):
-        return {"insight": data}
-
-    if isinstance(data, dict):
-        return data
-
-    return {"insight": load_local_articles()}
+    # 3. 单次 SQL 查询所有分类的文章 (单次 RTT)
+    return fetch_all_raw_articles_from_db(category_keys)
 
 
 def fetch_special_category_items(category_key: str) -> List[Dict[str, Any]]:
     response = fetch_special_data()
-    data = parse_special_response(response)
-    if not data:
-        return []
-    if isinstance(data, list):
-        return data if category_key == "insight" else []
-    if isinstance(data, dict):
-        items = data.get(category_key, [])
-        return items if isinstance(items, list) else []
-    return []
+    data = _coerce_special_payload(parse_special_response(response))
+    return data.get(category_key, []) if data else []
 
 
 def _row_value(row: Any, key: str) -> Any:
@@ -128,75 +109,101 @@ def _row_value(row: Any, key: str) -> Any:
         return None
 
 
-def fetch_raw_articles_from_db(category_key: str, limit: int = 200) -> List[Dict[str, Any]]:
+def fetch_all_raw_articles_from_db(category_keys: List[str], limit_per_cat: int = 40) -> Dict[str, List[Dict[str, Any]]]:
+    """批量从数据库读取文章，减少网络往返"""
     try:
-        placeholder = get_placeholder()
-        query = f"SELECT raw_payload FROM raw_articles WHERE category_key = {placeholder} ORDER BY ingested_at DESC LIMIT {placeholder}"
+        if not category_keys:
+            return {}
+            
+        # 使用窗口函数在单次查询中按分类取前 N 条（PostgreSQL 语法）
+        placeholders = ", ".join(["%s"] * len(category_keys))
+        query = f"""
+            WITH ranked_articles AS (
+                SELECT 
+                    category_key, 
+                    raw_payload,
+                    ROW_NUMBER() OVER(PARTITION BY category_key ORDER BY ingested_at DESC) as rank
+                FROM raw_articles
+                WHERE category_key IN ({placeholders})
+            )
+            SELECT category_key, raw_payload
+            FROM ranked_articles
+            WHERE rank <= %s
+        """
+        
+        db_data: Dict[str, List[Dict[str, Any]]] = {key: [] for key in category_keys}
+        
         with get_db_connection() as conn:
             cur = conn.cursor()
-            cur.execute(query, (category_key, limit))
+            cur.execute(query, (*category_keys, limit_per_cat))
             rows = cur.fetchall()
-        items: List[Dict[str, Any]] = []
+            
         for row in rows:
-            payload = _row_value(row, "raw_payload")
+            cat = row["category_key"]
+            payload = row["raw_payload"]
+            
             if isinstance(payload, str):
                 try:
                     payload = json.loads(payload)
-                except Exception:
+                except:
                     payload = {"raw_payload": payload}
+            
             if isinstance(payload, dict):
-                items.append(payload)
-        return items
+                db_data[cat].append(payload)
+                
+        return db_data
     except Exception as e:
-        print(f"⚠️ 读取 raw_articles 失败: {e}")
+        print(f"⚠️ 批量读取 raw_articles 失败: {e}")
+        return {}
+
+
+def get_all_synced_recently(category_keys: List[str], hours: int = 12) -> List[str]:
+    """批量检查哪些分类在最近 N 小时内同步过"""
+    try:
+        if not category_keys:
+            return []
+            
+        placeholders = ", ".join(["%s"] * len(category_keys))
+        # 找出最近 N 小时内有数据的分类
+        query = f"""
+            SELECT DISTINCT category_key 
+            FROM raw_articles 
+            WHERE category_key IN ({placeholders}) 
+            AND ingested_at > NOW() - INTERVAL '{hours} hours'
+        """
+        
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(query, category_keys)
+            rows = cur.fetchall()
+            
+        return [row["category_key"] for row in rows]
+    except Exception as e:
+        print(f"⚠️ 批量检查同步状态失败: {e}")
         return []
 
 
-def is_synced_today(category_key: str) -> bool:
-    """检查该分类今天是否已同步过"""
-    try:
-        placeholder = get_placeholder()
-        with get_db_connection() as conn:
-            cur = conn.cursor()
-            if is_postgres():
-                query = f"SELECT 1 FROM raw_articles WHERE category_key = {placeholder} AND ingested_at::date = CURRENT_DATE LIMIT 1"
-            else:
-                query = f"SELECT 1 FROM raw_articles WHERE category_key = {placeholder} AND date(ingested_at) = date('now') LIMIT 1"
-            cur.execute(query, (category_key,))
-            return cur.fetchone() is not None
-    except Exception as e:
-        print(f"⚠️ 检查同步状态失败: {e}")
-        return False
+def is_synced_recently(category_key: str, hours: int = 12) -> bool:
+    """单个检查（保留兼容性，但推荐用批量版）"""
+    return category_key in get_all_synced_recently([category_key], hours)
 
 
 def get_articles_for_category(category_key: str) -> List[Dict[str, Any]]:
-    """获取分类文章：今天已同步则查库，否则调 API 同步"""
+    """获取分类文章：读库，必要时先同步 Special"""
     
-    # 1. 今天已同步过 → 直接查库（毫秒级）
-    if is_synced_today(category_key):
+    # 1. 最近已同步过 → 直接查库（毫秒级）
+    if is_synced_recently(category_key):
         items = fetch_raw_articles_from_db(category_key)
         if items:
             return items
     
-    # 2. 今天未同步 → 调 Special API（约 8 秒）
+    # 2. 未同步 → 调 Special API（约 8 秒）
     items = fetch_special_category_items(category_key)
     if items:
         persist_raw_items(category_key, items)
-        return items
     
-    # 3. API 无数据 → 回退查库（可能有历史数据）
-    items = fetch_raw_articles_from_db(category_key)
-    if items:
-        return items
-
-    # 4. insight 分类的本地兜底
-    if category_key == "insight":
-        fallback = load_local_articles()
-        if fallback:
-            persist_raw_items(category_key, fallback)
-            return fallback
-
-    return []
+    # 3. 只从数据库读取
+    return fetch_raw_articles_from_db(category_key)
 
 
 
@@ -213,47 +220,30 @@ def persist_raw_items(category_key: str, items: List[Dict[str, Any]]) -> None:
                     continue
                 payload = json.dumps(item, ensure_ascii=False)
 
-                if is_postgres():
-                    query = (
-                        "INSERT INTO raw_articles "
-                        "(source_name, source_url, title, summary, content, category_key, raw_payload, published_at) "
-                        f"VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}) "
-                        "ON CONFLICT (source_url) DO UPDATE SET "
-                        "source_name = EXCLUDED.source_name, "
-                        "title = EXCLUDED.title, "
-                        "summary = EXCLUDED.summary, "
-                        "content = EXCLUDED.content, "
-                        "category_key = EXCLUDED.category_key, "
-                        "raw_payload = EXCLUDED.raw_payload, "
-                        "published_at = EXCLUDED.published_at, "
-                        "ingested_at = CURRENT_TIMESTAMP"
-                    )
-                    cur.execute(query, (
-                        normalized["source_name"],
-                        normalized["source_url"],
-                        normalized["title"],
-                        normalized["summary"],
-                        normalized["content"],
-                        category_key,
-                        payload,
-                        None
-                    ))
-                else:
-                    query = (
-                        "INSERT OR REPLACE INTO raw_articles "
-                        "(source_name, source_url, title, summary, content, category_key, raw_payload, published_at, ingested_at) "
-                        f"VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, CURRENT_TIMESTAMP)"
-                    )
-                    cur.execute(query, (
-                        normalized["source_name"],
-                        normalized["source_url"],
-                        normalized["title"],
-                        normalized["summary"],
-                        normalized["content"],
-                        category_key,
-                        payload,
-                        None
-                    ))
+                query = (
+                    "INSERT INTO raw_articles "
+                    "(source_name, source_url, title, summary, content, category_key, raw_payload, published_at) "
+                    f"VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}) "
+                    "ON CONFLICT (source_url) DO UPDATE SET "
+                    "source_name = EXCLUDED.source_name, "
+                    "title = EXCLUDED.title, "
+                    "summary = EXCLUDED.summary, "
+                    "content = EXCLUDED.content, "
+                    "category_key = EXCLUDED.category_key, "
+                    "raw_payload = EXCLUDED.raw_payload, "
+                    "published_at = EXCLUDED.published_at, "
+                    "ingested_at = CURRENT_TIMESTAMP"
+                )
+                cur.execute(query, (
+                    normalized["source_name"],
+                    normalized["source_url"],
+                    normalized["title"],
+                    normalized["summary"],
+                    normalized["content"],
+                    category_key,
+                    payload,
+                    None
+                ))
             conn.commit()
     except Exception as e:
         print(f"⚠️ 保存 raw_articles 失败: {e}")
@@ -730,7 +720,7 @@ def add_evidence(topic_id):
 # ============ 启动 ============
 
 if __name__ == '__main__':
-    # 全量初始化 (支持 SQLite 或 PostgreSQL)
+    # 全量初始化 (Supabase / PostgreSQL)
     from database import init_db
     init_db()
     

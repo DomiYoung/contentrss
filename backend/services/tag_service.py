@@ -4,7 +4,7 @@ Tag Service - 标签服务层
 """
 
 from typing import Dict, List, Optional, Any
-from database import get_db_connection, get_placeholder, is_postgres
+from database import get_db_connection, get_placeholder
 
 
 class TagService:
