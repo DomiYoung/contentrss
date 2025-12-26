@@ -5,6 +5,10 @@ import path from "path"
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  define: {
+    // 强制使用空字符串，确保请求走 Vite 代理
+    'import.meta.env.VITE_API_BASE_URL': JSON.stringify(''),
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

@@ -11,11 +11,14 @@ import json
 import requests
 from dotenv import load_dotenv
 from datetime import datetime
-from database import init_db, get_db_connection, get_placeholder
+from database import init_db, get_db_connection, get_placeholder, is_postgres
 import hashlib
 from typing import Any, Dict, List, Optional
-from psycopg2.extras import execute_values
-from psycopg2.pool import ThreadedConnectionPool
+
+# 条件导入 PostgreSQL 专用模块
+if is_postgres():
+    from psycopg2.extras import execute_values, RealDictCursor
+    from psycopg2.pool import ThreadedConnectionPool
 
 from services.entities import EntityService
 from services.tag_service import tag_service
@@ -63,38 +66,38 @@ def get_category_label(category_key: str) -> str:
     return mapping.get(category_key, category_key)
 
 
-# ========== 数据库连接池 ==========
-# 放在全局，避免每次请求都建立 TLS 连接
+# ========== 数据库连接管理 (SQLite / PostgreSQL 双模式) ==========
+from contextlib import contextmanager
+
 DB_URL = os.getenv('DATABASE_URL')
 _db_pool = None
 
 def get_pool():
     global _db_pool
-    if _db_pool is None:
-        print("💡 初始化数据库连接池...")
-        _db_pool = ThreadedConnectionPool(1, 10, DB_URL, sslmode='require')
-    return _db_pool
-
-def get_pooled_connection():
-    pool = get_pool()
-    return pool.getconn()
-
-def release_pooled_connection(conn):
-    pool = get_pool()
-    pool.putconn(conn)
-
-from contextlib import contextmanager
+    if is_postgres():
+        if _db_pool is None:
+            print("💡 初始化 PostgreSQL 连接池...")
+            _db_pool = ThreadedConnectionPool(1, 10, DB_URL, sslmode='require')
+        return _db_pool
+    return None  # SQLite 不使用连接池
 
 @contextmanager
 def db_conn():
-    conn = get_pooled_connection()
-    # 确保返回字典结构的 cursor
-    from psycopg2.extras import RealDictCursor
-    conn.cursor_factory = RealDictCursor
-    try:
-        yield conn
-    finally:
-        release_pooled_connection(conn)
+    if is_postgres():
+        pool = get_pool()
+        conn = pool.getconn()
+        conn.cursor_factory = RealDictCursor
+        try:
+            yield conn
+        finally:
+            pool.putconn(conn)
+    else:
+        # SQLite 模式：每次请求新建连接
+        conn = get_db_connection()
+        try:
+            yield conn
+        finally:
+            conn.close()
 
 # ================================
 
@@ -110,6 +113,25 @@ def _coerce_special_payload(data: Any) -> Dict[str, List[Dict[str, Any]]]:
     return {}
 
 
+def parse_datetime(value: Any) -> Optional[datetime]:
+    """解析日期时间，兼容 datetime 对象和字符串"""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            # SQLite 默认格式: '2025-12-26 15:30:00'
+            return datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            try:
+                # 备用格式
+                return datetime.fromisoformat(value)
+            except:
+                return None
+    return None
+
+
 def get_raw_articles_by_category() -> Dict[str, List[Dict[str, Any]]]:
     """统一获取所有分类的原始文章数据（极致优化：缓存命中仅 1 次 RTT）"""
     category_keys = list(get_category_mapping().keys())
@@ -120,6 +142,7 @@ def get_raw_articles_by_category() -> Dict[str, List[Dict[str, Any]]]:
     # 2. 检查同步需求 (每天仅需同步一次)
     now = datetime.now()
     needs_sync_keys = []
+    
     for key in category_keys:
         last_sync = last_sync_map.get(key)
         # 如果没数据，或者上次同步不是今天
@@ -127,7 +150,7 @@ def get_raw_articles_by_category() -> Dict[str, List[Dict[str, Any]]]:
             needs_sync_keys.append(key)
     
     if needs_sync_keys:
-        print(f"🔄 需要同步: {needs_sync_keys}")
+        print(f"🔄 需要同步 ({len(needs_sync_keys)}个分类): {needs_sync_keys}")
         try:
             response = fetch_special_data()
             sync_data = _coerce_special_payload(parse_special_response(response))
@@ -168,8 +191,11 @@ def fetch_all_raw_articles_with_metadata(category_keys: List[str], limit_per_cat
     try:
         if not category_keys:
             return {}, {}
-            
-        placeholders = ", ".join(["%s"] * len(category_keys))
+        
+        ph = get_placeholder()  # SQLite: ? / PostgreSQL: %s
+        placeholders = ", ".join([ph] * len(category_keys))
+        
+        # SQLite 和 PostgreSQL 都支持 WITH 和 ROW_NUMBER() 窗口函数
         query = f"""
             WITH ranked_articles AS (
                 SELECT 
@@ -182,7 +208,7 @@ def fetch_all_raw_articles_with_metadata(category_keys: List[str], limit_per_cat
             )
             SELECT category_key, raw_payload, ingested_at, rank
             FROM ranked_articles
-            WHERE rank <= %s
+            WHERE rank <= {ph}
         """
         
         db_data: Dict[str, List[Dict[str, Any]]] = {key: [] for key in category_keys}
@@ -201,7 +227,7 @@ def fetch_all_raw_articles_with_metadata(category_keys: List[str], limit_per_cat
             
             # 记录该分类最新的同步时间（rank=1 的即为最新）
             if rank == 1:
-                last_sync_map[cat] = ingested_at
+                last_sync_map[cat] = parse_datetime(ingested_at)
             
             if isinstance(payload, str):
                 try:
@@ -210,6 +236,8 @@ def fetch_all_raw_articles_with_metadata(category_keys: List[str], limit_per_cat
                     payload = {"raw_payload": payload}
             
             if isinstance(payload, dict):
+                # 将 ingested_at 添加到返回数据中
+                payload["ingested_at"] = str(ingested_at) if ingested_at else None
                 db_data[cat].append(payload)
                 
         return db_data, last_sync_map
@@ -232,7 +260,7 @@ def is_synced_recently(category_key: str) -> bool:
 
 
 def persist_raw_items(category_key: str, items: List[Dict[str, Any]]) -> None:
-    """批量保存文章，显著减少网络往返次数"""
+    """批量保存文章，支持 SQLite 和 PostgreSQL"""
     if not items:
         return
     try:
@@ -256,24 +284,33 @@ def persist_raw_items(category_key: str, items: List[Dict[str, Any]]) -> None:
         if not data_to_insert:
             return
 
-        query = """
-            INSERT INTO raw_articles 
-            (source_name, source_url, title, summary, content, category_key, raw_payload, published_at) 
-            VALUES %s
-            ON CONFLICT (source_url) DO UPDATE SET 
-            source_name = EXCLUDED.source_name, 
-            title = EXCLUDED.title, 
-            summary = EXCLUDED.summary, 
-            content = EXCLUDED.content, 
-            category_key = EXCLUDED.category_key, 
-            raw_payload = EXCLUDED.raw_payload, 
-            published_at = EXCLUDED.published_at, 
-            ingested_at = CURRENT_TIMESTAMP
-        """
-
         with db_conn() as conn:
             cur = conn.cursor()
-            execute_values(cur, query, data_to_insert)
+            if is_postgres():
+                # PostgreSQL: 使用 execute_values 批量插入
+                query = """
+                    INSERT INTO raw_articles 
+                    (source_name, source_url, title, summary, content, category_key, raw_payload, published_at) 
+                    VALUES %s
+                    ON CONFLICT (source_url) DO UPDATE SET 
+                    source_name = EXCLUDED.source_name, 
+                    title = EXCLUDED.title, 
+                    summary = EXCLUDED.summary, 
+                    content = EXCLUDED.content, 
+                    category_key = EXCLUDED.category_key, 
+                    raw_payload = EXCLUDED.raw_payload, 
+                    published_at = EXCLUDED.published_at, 
+                    ingested_at = CURRENT_TIMESTAMP
+                """
+                execute_values(cur, query, data_to_insert)
+            else:
+                # SQLite: 逐条插入 (INSERT OR REPLACE)
+                query = """
+                    INSERT OR REPLACE INTO raw_articles 
+                    (source_name, source_url, title, summary, content, category_key, raw_payload, published_at) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                cur.executemany(query, data_to_insert)
             conn.commit()
             print(f"✅ 已存入 {len(data_to_insert)} 条数据到分类 {category_key}")
     except Exception as e:
@@ -348,6 +385,79 @@ def build_summary_payload(analysis: Dict[str, Any], raw_summary: str) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def get_cached_analysis(source_url: str) -> Optional[Dict[str, Any]]:
+    """获取缓存的 AI 分析结果"""
+    if not source_url:
+        return None
+    
+    try:
+        ph = get_placeholder()
+        with db_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(f"""
+                SELECT ai_polarity, ai_impacts, ai_opinion, ai_tags, ai_analyzed_at
+                FROM raw_articles
+                WHERE source_url = {ph} AND ai_analyzed_at IS NOT NULL
+            """, (source_url,))
+            row = cur.fetchone()
+            
+            if row:
+                # 支持 dict 和 tuple 两种格式
+                if isinstance(row, dict):
+                    polarity = row.get("ai_polarity")
+                    impacts_str = row.get("ai_impacts")
+                    opinion = row.get("ai_opinion") or ""
+                    tags_str = row.get("ai_tags")
+                else:
+                    polarity = row[0]
+                    impacts_str = row[1]
+                    opinion = row[2] or ""
+                    tags_str = row[3]
+                
+                if polarity:  # ai_polarity 存在说明有缓存
+                    return {
+                        "polarity": polarity,
+                        "impacts": json.loads(impacts_str) if impacts_str else [],
+                        "opinion": opinion,
+                        "tags": json.loads(tags_str) if tags_str else [],
+                        "cached": True
+                    }
+    except Exception as e:
+        print(f"⚠️ 读取 AI 缓存失败: {e}")
+    
+    return None
+
+
+def save_analysis_cache(source_url: str, analysis: Dict[str, Any]) -> None:
+    """保存 AI 分析结果到缓存"""
+    if not source_url or not analysis:
+        return
+    
+    try:
+        ph = get_placeholder()
+        with db_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(f"""
+                UPDATE raw_articles
+                SET ai_polarity = {ph},
+                    ai_impacts = {ph},
+                    ai_opinion = {ph},
+                    ai_tags = {ph},
+                    ai_analyzed_at = CURRENT_TIMESTAMP
+                WHERE source_url = {ph}
+            """, (
+                analysis.get("polarity", "neutral"),
+                json.dumps(analysis.get("impacts", []), ensure_ascii=False),
+                analysis.get("opinion", ""),
+                json.dumps(analysis.get("tags", []), ensure_ascii=False),
+                source_url
+            ))
+            conn.commit()
+            print(f"✓ AI 分析已缓存: {source_url[:50]}...")
+    except Exception as e:
+        print(f"⚠️ 保存 AI 缓存失败: {e}")
+
+
 def build_intelligence_cards(
     limit: int = 20,
     skip_ai: bool = False,
@@ -371,6 +481,7 @@ def build_intelligence_cards(
 
             index += 1
             article_id = normalized["id"] or index
+            source_url = normalized.get("source_url")
 
             if skip_ai:
                 analysis = {
@@ -380,7 +491,17 @@ def build_intelligence_cards(
                     "opinion": ""
                 }
             else:
-                analysis = analyze_article(normalized["title"], normalized["summary"])
+                # 1. 先检查缓存
+                cached = get_cached_analysis(source_url)
+                if cached:
+                    analysis = cached
+                    print(f"📦 使用缓存: {normalized['title'][:30]}...")
+                else:
+                    # 2. 无缓存则调用 AI
+                    analysis = analyze_article(normalized["title"], normalized["summary"])
+                    # 3. 保存到缓存
+                    if source_url and analysis.get("polarity"):
+                        save_analysis_cache(source_url, analysis)
 
             tags = analysis.get("tags") or []
             if category_key:
@@ -672,6 +793,79 @@ def get_article_tags(article_id):
             {"id": "ai_信用修复", "name": "信用修复", "level": "ai", "color": "#71717A"},
         ]
     })
+
+
+@app.route('/api/reading-record', methods=['POST'])
+def save_reading_record():
+    """保存用户阅读时间记录"""
+    data = request.get_json()
+    
+    article_id = data.get('article_id')
+    device_id = data.get('device_id')
+    duration_seconds = data.get('duration_seconds', 0)
+    completed = data.get('completed', False)
+    
+    if not article_id or not device_id:
+        return jsonify({"error": "Missing article_id or device_id"}), 400
+    
+    try:
+        ph = get_placeholder()
+        with db_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(f"""
+                INSERT INTO reading_records (article_id, device_id, duration_seconds, completed)
+                VALUES ({ph}, {ph}, {ph}, {ph})
+            """, (article_id, device_id, duration_seconds, 1 if completed else 0))
+            conn.commit()
+        
+        return jsonify({"success": True})
+    except Exception as e:
+        print(f"❌ 保存阅读记录失败: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/reading-stats', methods=['GET'])
+def get_reading_stats():
+    """获取设备的阅读统计"""
+    device_id = request.args.get('device_id')
+    
+    if not device_id:
+        return jsonify({"error": "Missing device_id"}), 400
+    
+    try:
+        ph = get_placeholder()
+        with db_conn() as conn:
+            cur = conn.cursor()
+            # 获取总阅读时长
+            cur.execute(f"""
+                SELECT 
+                    COUNT(*) as total_articles,
+                    COALESCE(SUM(duration_seconds), 0) as total_seconds,
+                    COUNT(CASE WHEN completed = 1 THEN 1 END) as completed_count
+                FROM reading_records
+                WHERE device_id = {ph}
+            """, (device_id,))
+            row = cur.fetchone()
+            
+            # 获取每篇文章的阅读时长
+            cur.execute(f"""
+                SELECT article_id, SUM(duration_seconds) as total_duration
+                FROM reading_records
+                WHERE device_id = {ph}
+                GROUP BY article_id
+            """, (device_id,))
+            article_times = {r[0]: r[1] for r in cur.fetchall()}
+        
+        return jsonify({
+            "device_id": device_id,
+            "total_articles": row[0] if row else 0,
+            "total_seconds": row[1] if row else 0,
+            "completed_count": row[2] if row else 0,
+            "article_reading_times": article_times
+        })
+    except Exception as e:
+        print(f"❌ 获取阅读统计失败: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/entities', methods=['GET'])

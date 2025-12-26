@@ -46,8 +46,13 @@ export default function App() {
   const [feed, setFeed] = useState<IntelligenceCardData[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // 调用后端 /api/intelligence 获取 AI 分析后的情报
+  // 调用后端 /api/intelligence 获取 AI 分析后的情报 (仅在 home tab 时)
   useEffect(() => {
+    // 只在 home tab 时才加载情报
+    if (activeTab !== "home") {
+      return;
+    }
+
     let isActive = true;
 
     async function loadFeed() {
@@ -77,7 +82,7 @@ export default function App() {
     return () => {
       isActive = false;
     };
-  }, [activeCategory]);
+  }, [activeCategory, activeTab]);
 
   const handleCardClick = (id: number) => {
     setActiveArticleId(id);

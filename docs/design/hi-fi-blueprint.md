@@ -88,17 +88,18 @@
 ## 4. 信息架构与导航
 
 **主导航（Tab Bar，4+1）**
-- Feed（情报）
+- Raw / Data Center（原始数据，第一入口）
+- Intelligence / Feed（情报）
 - Radar（雷达）
-- Briefing（简报）
-- Data Center（数据，内测/内部入口）
+- Internal / Research（内参）
 - Profile/Notes（资产）
 
 **顶层结构**
-Feed = 事实+影响  
-Briefing = 叙事+框架  
+Raw Data = 原始公众号数据校验  
+Intelligence = 今日简报（顶部）+ 事实+影响  
+Radar = 订阅与预警  
+Internal = 主题研究 / 证据链 / 版本  
 Notes = 个人资产
-Data Center = 原始数据校验
 
 **Profile/Notes 内部**
 - 角色与标签管理（Lens/兴趣标签可随时调整）
@@ -115,12 +116,13 @@ Data Center = 原始数据校验
 - Step 4：通知价值引导
 - Step 5：登录提示（仅在收藏/笔记/同步时触发）
 
-### 5.2 Feed 首页（Daily 5）
+### 5.2 Intelligence 首页（Daily Briefing + Daily 5）
 **结构**
 1. 顶部：Search + Lens Switcher  
-2. 主标题：Today’s 5  
-3. Top 5 卡片  
-4. “更多已折叠”入口
+2. Daily Briefing 模块（今日简报）  
+3. 主标题：Today’s 5  
+4. Top 5 卡片  
+5. “更多已折叠”入口
 
 **卡片密度**
 - 默认折叠态：56px
@@ -143,7 +145,8 @@ Data Center = 原始数据校验
 - Body：衬线体 + 大行高
 - 底部栏：Share / Save / Note / Ask AI
 
-### 5.5 Daily Briefing（编辑叙事）
+### 5.5 Daily Briefing（情报页顶部模块）
+- 位置：情报页首屏顶部，作为日度总览
 - Lead 标题 + TL;DR
 - Framework Gallery（矩阵/金字塔）
 - Deep Dive（嵌入卡片）
@@ -152,14 +155,14 @@ Data Center = 原始数据校验
 ### 5.6 Entity Radar
 - 分类列表 + 订阅开关
 - “My Radar” 顶置
-- 订阅状态影响 Feed 排序
+- 订阅状态影响 Intelligence 排序
 
 ### 5.7 Notes（Second Brain）
 - 时间轴列表 + 实体筛选
 - 笔记关联实体与事件
 - 卡片式“历史判断”回看
 
-### 5.8 Data Center（Raw Data）
+### 5.8 Data Center（Raw Data，第一 Tab）
 - 原始文章列表 + 分类标签
 - 字段展开视图（文章信息/标题/URL）
 - 仅展示，不做编辑
@@ -188,8 +191,8 @@ Data Center = 原始数据校验
 - 内容：价值主张、角色卡片、兴趣标签、推荐订阅实体、进度指示
 - 功能：选择/跳过角色、选择标签、订阅实体、继续/返回
 
-**Feed（Daily 5）**
-- 内容：搜索、Lens 切换、Today’s 5 标题、Top 5 卡片、折叠区入口
+**Intelligence（Daily Briefing + Daily 5）**
+- 内容：搜索、Lens 切换、今日简报、Today’s 5 标题、Top 5 卡片、折叠区入口
 - 功能：切换 Lens、展开/折叠卡片、左滑忽略、长按海报、点击进入详情
 
 **Intelligence Card**
@@ -200,7 +203,7 @@ Data Center = 原始数据校验
 - 内容：返回/原文、AI 结论、关键事实、极性仪表、正文、底部栏
 - 功能：分享、收藏、记笔记、Ask AI、打开原文
 
-**Daily Briefing**
+**Daily Briefing（情报页顶部模块）**
 - 内容：标题/摘要、TL;DR、Framework、叙事流、What’s Next
 - 功能：章节跳转、展开卡片、分享摘要
 
@@ -228,12 +231,12 @@ Data Center = 原始数据校验
 | Onboarding | Selecting | 选择角色/标签中 |
 | Onboarding | Empty | 未选任何项时提示最小建议 |
 | Onboarding | Error | 网络异常/加载失败 |
-| Feed | Default | Top 5 + 折叠入口 |
-| Feed | Loading | Skeleton 卡片 |
-| Feed | Expanded | 某张卡片展开 |
-| Feed | Swiping | 左滑忽略状态 |
-| Feed | Empty | 无结果/需调整标签 |
-| Feed | Offline | 显示缓存 + 重试 |
+| Intelligence | Default | Top 5 + 折叠入口 |
+| Intelligence | Loading | Skeleton 卡片 |
+| Intelligence | Expanded | 某张卡片展开 |
+| Intelligence | Swiping | 左滑忽略状态 |
+| Intelligence | Empty | 无结果/需调整标签 |
+| Intelligence | Offline | 显示缓存 + 重试 |
 | Card | Default | 折叠态 |
 | Card | Expanded | 展开态（影响链/观点） |
 | Card | Pressed | 点击态反馈 |
@@ -242,9 +245,9 @@ Data Center = 原始数据校验
 | Detail | Loading | 内容拉取中 |
 | Detail | Saving | Save/Note 操作反馈 |
 | Detail | Error | 原文/数据加载失败 |
-| Briefing | Default | 标题/摘要/框架 |
-| Briefing | Loading | Skeleton |
-| Briefing | Empty | 今日未生成 |
+| Daily Briefing | Default | 标题/摘要/框架 |
+| Daily Briefing | Loading | Skeleton |
+| Daily Briefing | Empty | 今日未生成 |
 | Radar | Default | 分类 + 列表 |
 | Radar | Toggling | 订阅切换中 |
 | Radar | Empty | 未订阅提示 |
@@ -263,7 +266,7 @@ Data Center = 原始数据校验
 
 ### 5.12 数据字段对齐（真实数据）
 
-**Feed 卡片字段（/api/intelligence）**
+**Intelligence 卡片字段（/api/intelligence）**
 - 标题：`title`
 - 事实核：`fact`（AI 失败时可能为空，需隐藏或显示“暂无结论”）
 - 影响链：`impacts[]`（空数组时显示占位或折叠）
@@ -284,7 +287,7 @@ Data Center = 原始数据校验
   - ID（自增ID）
 
 **标签切换行为**
-- Feed 标签切换：发起 `GET /api/intelligence?category=legal`
+- Intelligence 标签切换：发起 `GET /api/intelligence?category=legal`
 - Data Center 标签切换：发起 `GET /api/raw-data?category=legal`
 
 ---
@@ -305,7 +308,7 @@ Data Center = 原始数据校验
 - 长按：海报预览弹出（350ms）
 - 左滑忽略：位移 + 渐隐
 - 关键动作：轻触感（Haptic）
-- 加载状态：Feed 使用骨架卡片（Shimmer/Pulse），Data Center 顶部显示刷新提示
+- 加载状态：Intelligence 使用骨架卡片（Shimmer/Pulse），Data Center 顶部显示刷新提示
 
 ---
 
@@ -320,10 +323,10 @@ Data Center = 原始数据校验
 ## 9. 交付清单（高保真出图）
 
 1. Onboarding（Lens 选择）
-2. Feed（Top 5 + 折叠）
-3. Feed（Lens 切换对比）
+2. Intelligence（Top 5 + 折叠）
+3. Intelligence（Lens 切换对比）
 4. Detail（The Brain + 底部栏）
-5. Briefing（Lenny Style）
+5. Daily Briefing（情报页顶部模块）
 6. Radar（订阅状态）
 7. Notes（资产视图）
 8. Poster（分享模板）
