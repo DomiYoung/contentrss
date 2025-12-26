@@ -5,6 +5,10 @@ import type { IntelligenceCardData } from "@/types";
 import type { ArticleDetailData } from "@/types/article";
 import type { Entity, SubscriptionResponse } from "@/types/entities";
 import type { DailyBriefingData } from "@/types/briefing";
+import { fetchWithCache, clearAllCache } from "./cache";
+
+// 导出清除缓存函数供外部使用
+export { clearAllCache as clearApiCache };
 
 export const setApiToken = (token: string) => {
     _apiToken = token;
@@ -42,11 +46,13 @@ export interface IntelligenceResponse {
 
 /**
  * 获取 AI 分析后的情报卡片（调用后端 /api/intelligence）
+ * 支持 IndexedDB 缓存，同一天内复用缓存
  */
 export async function fetchIntelligence(
     limit: number = 20,
     skipAi: boolean = false,
-    category?: string
+    category?: string,
+    forceRefresh: boolean = false
 ): Promise<IntelligenceResponse> {
     const params = new URLSearchParams({
         limit: String(limit),
@@ -56,13 +62,19 @@ export async function fetchIntelligence(
         params.set("category", category);
     }
     const url = `${BACKEND_BASE_URL}/api/intelligence?${params.toString()}`;
-    const response = await fetch(url);
+    const cacheKey = `intelligence-${category || 'all'}-${limit}-${skipAi}`;
 
-    if (!response.ok) {
-        throw new Error(`Intelligence API Error: ${response.status}`);
-    }
-
-    return response.json();
+    return fetchWithCache<IntelligenceResponse>(
+        cacheKey,
+        async () => {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Intelligence API Error: ${response.status}`);
+            }
+            return response.json();
+        },
+        forceRefresh
+    );
 }
 
 // 通用请求包装器 (参考 react-ai 风格)
@@ -154,9 +166,15 @@ export interface RawDataResponse {
     items: Array<Record<string, unknown>>;
 }
 
-export async function fetchRawData(category: string): Promise<RawDataResponse> {
+export async function fetchRawData(category: string, forceRefresh: boolean = false): Promise<RawDataResponse> {
     const safeCategory = encodeURIComponent(category);
-    return request(`${API_BASE}/raw-data?category=${safeCategory}`);
+    const cacheKey = `raw-data-${category}`;
+
+    return fetchWithCache<RawDataResponse>(
+        cacheKey,
+        async () => request(`${API_BASE}/raw-data?category=${safeCategory}`),
+        forceRefresh
+    );
 }
 
 // 飞书多维表格 API (Data View 重构后使用通用 request)

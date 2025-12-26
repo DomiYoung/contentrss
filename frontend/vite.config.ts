@@ -20,8 +20,9 @@ export default defineConfig({
     open: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'https://zooming-truth-production-7145.up.railway.app',
         changeOrigin: true,
+        secure: true,
       }
     }
   },
