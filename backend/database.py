@@ -13,9 +13,10 @@ def is_postgres():
 
 def get_db_connection():
     if is_postgres():
-        conn = psycopg2.connect(DB_URL, cursor_factory=RealDictCursor)
-        # PostgreSQL 不需要显式设置 row_factory，RealDictCursor 已经处理了
+        # Supabase 需要 SSL 连接
+        conn = psycopg2.connect(DB_URL, cursor_factory=RealDictCursor, sslmode='require')
         return conn
+
     else:
         # 兼容 SQLite
         sqlite_path = DB_URL
