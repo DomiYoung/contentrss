@@ -117,9 +117,14 @@ def get_raw_articles_by_category() -> Dict[str, List[Dict[str, Any]]]:
     # 1. 单次查询获取数据 + 状态
     db_data, last_sync_map = fetch_all_raw_articles_with_metadata(category_keys)
     
-    # 2. 检查同步需求
+    # 2. 检查同步需求 (每天仅需同步一次)
     now = datetime.now()
-    needs_sync_keys = [k for k in category_keys if not last_sync_map.get(k) or (now - last_sync_map[k]).total_seconds() > 12 * 3600]
+    needs_sync_keys = []
+    for key in category_keys:
+        last_sync = last_sync_map.get(key)
+        # 如果没数据，或者上次同步不是今天
+        if not last_sync or last_sync.date() < now.date():
+            needs_sync_keys.append(key)
     
     if needs_sync_keys:
         print(f"🔄 需要同步: {needs_sync_keys}")
@@ -213,18 +218,16 @@ def fetch_all_raw_articles_with_metadata(category_keys: List[str], limit_per_cat
         return {}, {}
 
 
-def get_all_synced_recently(category_keys: List[str], hours: int = 12) -> List[str]:
-    """批量检查哪些分类在最近 N 小时内同步过"""
+def get_all_synced_recently(category_keys: List[str]) -> List[str]:
+    """批量检查哪些分类今天已经同步过"""
     _, last_sync_map = fetch_all_raw_articles_with_metadata(category_keys, limit_per_cat=1)
-    now = datetime.now()
-    return [k for k, v in last_sync_map.items() if (now - v).total_seconds() < hours * 3600]
+    today = datetime.now().date()
+    return [k for k, v in last_sync_map.items() if v.date() >= today]
 
 
-def is_synced_recently(category_key: str, hours: int = 12) -> bool:
-    """单个检查（保留兼容性，但推荐用批量版）"""
-    return category_key in get_all_synced_recently([category_key], hours)
-    """单个检查（保留兼容性，但推荐用批量版）"""
-    return category_key in get_all_synced_recently([category_key], hours)
+def is_synced_recently(category_key: str) -> bool:
+    """单个检查"""
+    return category_key in get_all_synced_recently([category_key])
 
 
 def get_articles_for_category(category_key: str) -> List[Dict[str, Any]]:
