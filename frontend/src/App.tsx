@@ -35,7 +35,7 @@ function backendToFrontend(card: BackendCard): IntelligenceCardData {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<Tab>("home");
+  const [activeTab, setActiveTab] = useState<Tab>("data");
   const [view, setView] = useState<ViewState>("feed");
   const [activeArticleId, setActiveArticleId] = useState<number | null>(null);
 

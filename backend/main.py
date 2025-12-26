@@ -548,7 +548,9 @@ def get_raw_data():
 def get_intelligence():
     """获取 AI 分析后的情报卡片（首页用）"""
     limit = int(request.args.get('limit', 20))
-    skip_ai = request.args.get('skip_ai', 'false').lower() == 'true'
+    # 生产环境可通过 DEFAULT_SKIP_AI=true 跳过 AI 分析（避免内网 API 超时）
+    default_skip = os.getenv('DEFAULT_SKIP_AI', 'false').lower() == 'true'
+    skip_ai = request.args.get('skip_ai', str(default_skip)).lower() == 'true'
     category = request.args.get('category')
 
     cards = build_intelligence_cards(limit=limit, skip_ai=skip_ai, category_key=category)
