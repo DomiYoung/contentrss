@@ -48,8 +48,8 @@ ai_client = OpenAI(
 app = Flask(__name__)
 
 # 生产环境 CORS 配置
-PROD_ORIGINS = os.getenv('ALLOWED_ORIGINS', '*').split(',')
-CORS(app, origins=PROD_ORIGINS)
+PROD_ORIGINS = os.getenv('ALLOWED_ORIGINS', 'http://localhost:16889,http://localhost:5173').split(',')
+CORS(app, origins=PROD_ORIGINS, supports_credentials=True)
 
 
 def get_category_mapping() -> Dict[str, str]:
@@ -228,24 +228,6 @@ def get_all_synced_recently(category_keys: List[str]) -> List[str]:
 def is_synced_recently(category_key: str) -> bool:
     """单个检查"""
     return category_key in get_all_synced_recently([category_key])
-
-
-def get_articles_for_category(category_key: str) -> List[Dict[str, Any]]:
-    """获取分类文章：读库，必要时先同步 Special"""
-    
-    # 1. 最近已同步过 → 直接查库（毫秒级）
-    if is_synced_recently(category_key):
-        items = fetch_raw_articles_from_db(category_key)
-        if items:
-            return items
-    
-    # 2. 未同步 → 调 Special API（约 8 秒）
-    items = fetch_special_category_items(category_key)
-    if items:
-        persist_raw_items(category_key, items)
-    
-    # 3. 只从数据库读取
-    return fetch_raw_articles_from_db(category_key)
 
 
 

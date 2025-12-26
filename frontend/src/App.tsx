@@ -8,6 +8,7 @@ import { ArticleDetail } from "@/views/ArticleDetail";
 import { EntityRadar } from "@/views/EntityRadar";
 import { DailyBriefing } from "@/views/DailyBriefing";
 import { Profile } from "@/views/Profile";
+import { ProfilePage } from "@/views/ProfilePage";
 import { MyNotes } from "@/views/MyNotes";
 import { DataView } from "@/views/DataView";
 import { IntelligenceSkeleton } from "@/components/IntelligenceSkeleton";
@@ -191,11 +192,11 @@ export default function App() {
         }
 
 
-        {/* VIEW: PROFILE */}
+        {/* VIEW: PROFILE (新暗色主题) */}
         {
           activeTab === "profile" && (
             <div className="animate-in fade-in zoom-in-95 duration-300 -mx-4 -mt-4">
-              <Profile onNavigate={(view) => setActiveTab(view as Tab)} />
+              <ProfilePage />
             </div>
           )
         }
