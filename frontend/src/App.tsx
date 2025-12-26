@@ -10,6 +10,7 @@ import { DailyBriefing } from "@/views/DailyBriefing";
 import { Profile } from "@/views/Profile";
 import { MyNotes } from "@/views/MyNotes";
 import { DataView } from "@/views/DataView";
+import { IntelligenceSkeleton } from "@/components/IntelligenceSkeleton";
 import type { IntelligenceCardData } from "@/types/index";
 import { fetchIntelligence, type IntelligenceCard as BackendCard } from "@/lib/api";
 import { AnimatePresence } from "framer-motion";
@@ -108,77 +109,59 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#FAF9F6] font-sans text-zinc-900 selection:bg-zinc-200 pb-20">
-      {/* Hide Header on Profile tab */}
-      {activeTab !== "profile" && <Header />}
+      {/* Hide Header on Profile tab or when loading home feed */}
+      {(activeTab !== "profile" && !(activeTab === "home" && loading)) && <Header />}
 
       <main className="max-w-md mx-auto px-4 py-4">
         {/* VIEW: HOME */}
         {activeTab === "home" && (
-          <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-            {/* 统一分类标签筛选 */}
-            <CategoryFilter
-              activeKey={activeCategory}
-              onChange={setActiveCategory}
-            />
-
-            {/* Today's Briefing 入口卡片 - 核心功能前置 */}
-            <div className="mt-4 mb-4">
-              <BriefingEntryCard onClick={() => setActiveTab("briefing")} />
+          loading ? (
+            <div className="-mx-4 -mt-4">
+              <IntelligenceSkeleton />
             </div>
+          ) : (
+            <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
+              {/* 统一分类标签筛选 */}
+              <CategoryFilter
+                activeKey={activeCategory}
+                onChange={setActiveCategory}
+              />
 
-            {/* 高保真情报卡片列表 (Standard PRD v3.0) */}
-            <div className="space-y-4">
-              {loading ? (
-                <>
-                  {Array.from({ length: 4 }).map((_, idx) => (
-                    <div
-                      key={`skeleton-${idx}`}
-                      className="bg-[#FAF9F6] rounded-3xl border border-zinc-200/60 p-6 animate-pulse"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="h-5 w-24 bg-zinc-200 rounded-full" />
-                        <div className="h-8 w-8 bg-zinc-200 rounded-full" />
-                      </div>
-                      <div className="mt-5 space-y-3">
-                        <div className="h-6 w-4/5 bg-zinc-200 rounded" />
-                        <div className="h-4 w-full bg-zinc-200 rounded" />
-                        <div className="h-4 w-5/6 bg-zinc-200 rounded" />
-                      </div>
-                      <div className="mt-5 flex gap-2">
-                        <div className="h-8 w-24 bg-zinc-200 rounded-2xl" />
-                        <div className="h-8 w-28 bg-zinc-200 rounded-2xl" />
-                      </div>
+              {/* Today's Briefing 入口卡片 - 核心功能前置 */}
+              <div className="mt-4 mb-4">
+                <BriefingEntryCard onClick={() => setActiveTab("briefing")} />
+              </div>
+
+              {/* 高保真情报卡片列表 (Standard PRD v3.0) */}
+              <div className="space-y-4">
+                {filteredFeed.length > 0 ? (
+                  <AnimatePresence mode="popLayout">
+                    {filteredFeed.map(card => (
+                      <IntelligenceCard
+                        key={card.id}
+                        data={card}
+                        onClick={() => handleCardClick(card.id)}
+                      />
+                    ))}
+                  </AnimatePresence>
+                ) : (
+                  <div className="py-20 text-center flex flex-col items-center gap-4 animate-in fade-in zoom-in-95">
+                    <div className="w-12 h-12 bg-zinc-100 rounded-2xl flex items-center justify-center text-zinc-300">
+                      <span className="font-black text-xl">!</span>
                     </div>
-                  ))}
-                </>
-              ) : filteredFeed.length > 0 ? (
-                <AnimatePresence mode="popLayout">
-                  {filteredFeed.map(card => (
-                    <IntelligenceCard
-                      key={card.id}
-                      data={card}
-                      onClick={() => handleCardClick(card.id)}
-                    />
-                  ))}
-                </AnimatePresence>
-              ) : (
-                <div className="py-20 text-center flex flex-col items-center gap-4 animate-in fade-in zoom-in-95">
-                  <div className="w-12 h-12 bg-zinc-100 rounded-2xl flex items-center justify-center text-zinc-300">
-                    <span className="font-black text-xl">!</span>
+                    <p className="text-[11px] font-black text-zinc-400 uppercase tracking-widest">No Intelligence for {activeCategoryLabel}</p>
                   </div>
-                  <p className="text-[11px] font-black text-zinc-400 uppercase tracking-widest">No Intelligence for {activeCategoryLabel}</p>
+                )}
+              </div>
+
+              {!loading && (
+                <div className="text-center py-8 text-zinc-300 text-[10px] uppercase tracking-widest font-medium">
+                  Briefing Complete
                 </div>
               )}
             </div>
-
-            {!loading && (
-              <div className="text-center py-8 text-zinc-300 text-[10px] uppercase tracking-widest font-medium">
-                Briefing Complete
-              </div>
-            )}
-          </div>
-        )
-        }
+          )
+        )}
 
         {/* VIEW: SUBSCRIBE (Entity Radar) */}
         {
