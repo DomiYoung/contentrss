@@ -43,8 +43,19 @@ export interface IntelligenceResponse {
 /**
  * 获取 AI 分析后的情报卡片（调用后端 /api/intelligence）
  */
-export async function fetchIntelligence(limit: number = 20, skipAi: boolean = false): Promise<IntelligenceResponse> {
-    const url = `${BACKEND_BASE_URL}/api/intelligence?limit=${limit}&skip_ai=${skipAi}`;
+export async function fetchIntelligence(
+    limit: number = 20,
+    skipAi: boolean = false,
+    category?: string
+): Promise<IntelligenceResponse> {
+    const params = new URLSearchParams({
+        limit: String(limit),
+        skip_ai: String(skipAi),
+    });
+    if (category && category !== "all") {
+        params.set("category", category);
+    }
+    const url = `${BACKEND_BASE_URL}/api/intelligence?${params.toString()}`;
     const response = await fetch(url);
 
     if (!response.ok) {
@@ -134,6 +145,18 @@ export async function toggleSubscription(entityId: string): Promise<Subscription
 
 export async function fetchDailyBriefing(): Promise<DailyBriefingData> {
     return request(`${API_BASE}/briefing/daily`);
+}
+
+export interface RawDataResponse {
+    category: string;
+    label: string;
+    count: number;
+    items: Array<Record<string, unknown>>;
+}
+
+export async function fetchRawData(category: string): Promise<RawDataResponse> {
+    const safeCategory = encodeURIComponent(category);
+    return request(`${API_BASE}/raw-data?category=${safeCategory}`);
 }
 
 // 飞书多维表格 API (Data View 重构后使用通用 request)

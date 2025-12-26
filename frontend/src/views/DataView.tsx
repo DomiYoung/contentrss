@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { fetchSpecialChat } from "@/lib/api";
+import { fetchRawData } from "@/lib/api";
 import { DATA_CATEGORIES, type DataCategoryId } from "@/lib/data-categories";
 import { RefreshCw, AlertCircle, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -21,52 +21,26 @@ export function DataView() {
         setLoading(true);
         setError(null);
         try {
-            const category = DATA_CATEGORIES.find(c => c.id === categoryId);
-            // 使用 Special Chat 接口，content 传分类名称
-            const response = await fetchSpecialChat(category?.label || categoryId, 1036, true);
+            const response = await fetchRawData(categoryId);
+            const items = Array.isArray(response.items) ? response.items : [];
+            const mapped = items.map((item: any, idx: number) => {
+                const raw = item && typeof item === "object" ? item : {};
+                const fields = (raw as any).fields && typeof (raw as any).fields === "object"
+                    ? (raw as any).fields
+                    : raw;
+                const id =
+                    (raw as any).record_id ||
+                    (raw as any).id ||
+                    (fields as any).自增ID ||
+                    (fields as any).id ||
+                    `item-${idx}`;
 
-            // 解析返回数据 - 适配分类对象结构
-            // 结构: res_content.response.content = "{ legal: [...], digital: [...] }"
-            let items: DataRecord[] = [];
-            if (response.res_status_code === '0' && response.res_content) {
-                const resContent = response.res_content;
-
-                // 层级1: res_content.response (对象)
-                const responseObj = resContent.response;
-                let categorizedData: Record<string, unknown[]> | null = null;
-
-                if (typeof responseObj === 'object' && responseObj !== null) {
-                    // 层级2: response.content (转义 JSON 字符串)
-                    const contentField = (responseObj as Record<string, unknown>).content;
-                    if (typeof contentField === 'string') {
-                        try {
-                            categorizedData = JSON.parse(contentField);
-                        } catch {
-                            // 解析失败
-                        }
-                    } else if (typeof contentField === 'object') {
-                        categorizedData = contentField as Record<string, unknown[]>;
-                    }
-                } else if (typeof responseObj === 'string') {
-                    try {
-                        categorizedData = JSON.parse(responseObj);
-                    } catch {
-                        // 解析失败
-                    }
-                }
-
-                // 从分类对象中按 categoryId 取对应的数组
-                if (categorizedData && typeof categorizedData === 'object') {
-                    const categoryArray = (categorizedData as Record<string, any[]>)[categoryId];
-                    if (Array.isArray(categoryArray)) {
-                        items = categoryArray.map((item: any, idx: number) => ({
-                            id: item.record_id || `item-${idx}`,
-                            fields: item.fields || item
-                        }));
-                    }
-                }
-            }
-            setRecords(items);
+                return {
+                    id: String(id),
+                    fields: fields && typeof fields === "object" ? fields : {}
+                };
+            });
+            setRecords(mapped);
         } catch (err) {
             setError(err instanceof Error ? err.message : "加载失败");
             setRecords([]);

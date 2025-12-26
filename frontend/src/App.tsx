@@ -2,13 +2,14 @@ import { useState, useEffect } from "react";
 import { Header } from "@/components/layout/Header";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { IntelligenceCard } from "@/components/IntelligenceCard";
-import { CategoryFilter } from "@/components/CategoryFilter";
+import { CategoryFilter, CATEGORY_TAGS } from "@/components/CategoryFilter";
 import { BriefingEntryCard } from "@/components/BriefingEntryCard";
 import { ArticleDetail } from "@/views/ArticleDetail";
 import { EntityRadar } from "@/views/EntityRadar";
 import { DailyBriefing } from "@/views/DailyBriefing";
 import { Profile } from "@/views/Profile";
 import { MyNotes } from "@/views/MyNotes";
+import { DataView } from "@/views/DataView";
 import type { IntelligenceCardData } from "@/types/index";
 import { fetchIntelligence, type IntelligenceCard as BackendCard } from "@/lib/api";
 import { AnimatePresence } from "framer-motion";
@@ -26,7 +27,7 @@ function backendToFrontend(card: BackendCard): IntelligenceCardData {
     fact: card.core_insight || card.fact, // 优先展示核心洞察
     impacts: card.impacts,
     opinion: card.alpha_opportunity || card.opinion, // 优先展示 Alpha 机会
-    tags: card.tags,
+    tags: card.tags || [],
     source_name: card.source_name,
     source_url: card.source_url,
   };
@@ -45,24 +46,36 @@ export default function App() {
 
   // 调用后端 /api/intelligence 获取 AI 分析后的情报
   useEffect(() => {
+    let isActive = true;
+
     async function loadFeed() {
+      setLoading(true);
       try {
         // 调用后端 API（默认开启 AI 分析）
-        const response = await fetchIntelligence(20, false);
+        const response = await fetchIntelligence(20, false, activeCategory);
+        if (!isActive) return;
 
         // 转换为前端类型
         const cards = response.cards.map(backendToFrontend);
         setFeed(cards);
       } catch (err) {
+        if (!isActive) return;
+        setFeed([]);
         // 后端不可用时静默失败
         console.warn('后端 API 不可用，情报加载失败');
       } finally {
-        setLoading(false);
+        if (isActive) {
+          setLoading(false);
+        }
       }
     }
 
     loadFeed();
-  }, []);
+
+    return () => {
+      isActive = false;
+    };
+  }, [activeCategory]);
 
   const handleCardClick = (id: number) => {
     setActiveArticleId(id);
@@ -75,7 +88,7 @@ export default function App() {
     setActiveArticleId(null);
   };
 
-  // TODO: 后端按分类筛选
+  const activeCategoryLabel = CATEGORY_TAGS.find((cat) => cat.key === activeCategory)?.name || activeCategory;
   const filteredFeed = feed;
 
   if (view === "briefing") {
@@ -116,9 +129,28 @@ export default function App() {
             {/* 高保真情报卡片列表 (Standard PRD v3.0) */}
             <div className="space-y-4">
               {loading ? (
-                <div className="py-20 text-center">
-                  <span className="text-[10px] font-black text-zinc-300 uppercase tracking-widest animate-pulse">正在分析行业情报...</span>
-                </div>
+                <>
+                  {Array.from({ length: 4 }).map((_, idx) => (
+                    <div
+                      key={`skeleton-${idx}`}
+                      className="bg-[#FAF9F6] rounded-3xl border border-zinc-200/60 p-6 animate-pulse"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="h-5 w-24 bg-zinc-200 rounded-full" />
+                        <div className="h-8 w-8 bg-zinc-200 rounded-full" />
+                      </div>
+                      <div className="mt-5 space-y-3">
+                        <div className="h-6 w-4/5 bg-zinc-200 rounded" />
+                        <div className="h-4 w-full bg-zinc-200 rounded" />
+                        <div className="h-4 w-5/6 bg-zinc-200 rounded" />
+                      </div>
+                      <div className="mt-5 flex gap-2">
+                        <div className="h-8 w-24 bg-zinc-200 rounded-2xl" />
+                        <div className="h-8 w-28 bg-zinc-200 rounded-2xl" />
+                      </div>
+                    </div>
+                  ))}
+                </>
               ) : filteredFeed.length > 0 ? (
                 <AnimatePresence mode="popLayout">
                   {filteredFeed.map(card => (
@@ -134,7 +166,7 @@ export default function App() {
                   <div className="w-12 h-12 bg-zinc-100 rounded-2xl flex items-center justify-center text-zinc-300">
                     <span className="font-black text-xl">!</span>
                   </div>
-                  <p className="text-[11px] font-black text-zinc-400 uppercase tracking-widest">No Intelligence for {activeCategory}</p>
+                  <p className="text-[11px] font-black text-zinc-400 uppercase tracking-widest">No Intelligence for {activeCategoryLabel}</p>
                 </div>
               )}
             </div>
@@ -162,6 +194,15 @@ export default function App() {
           activeTab === "briefing" && (
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 -mx-4 -mt-4">
               <DailyBriefing onBack={() => setActiveTab("home")} />
+            </div>
+          )
+        }
+
+        {/* VIEW: DATA CENTER (Raw Articles) */}
+        {
+          activeTab === "data" && (
+            <div className="animate-in fade-in zoom-in-95 duration-500 -mx-4 -mt-4">
+              <DataView />
             </div>
           )
         }

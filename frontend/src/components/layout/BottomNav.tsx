@@ -1,4 +1,4 @@
-import { Home, Radio, User, Newspaper } from "lucide-react";
+import { Home, Radio, User, Newspaper, Database } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { triggerHaptic } from "@/lib/haptic";
 
@@ -20,6 +20,7 @@ export function BottomNav({ activeTab, onTabChange }: BottomNavProps) {
         { id: "home" as Tab, icon: Home, label: "情报" },
         { id: "subscribe" as Tab, icon: Radio, label: "雷达" },
         { id: "briefing" as Tab, icon: Newspaper, label: "内参" },
+        { id: "data" as Tab, icon: Database, label: "数据" },
         { id: "profile" as Tab, icon: User, label: "我" },
     ];
 

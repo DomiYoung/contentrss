@@ -62,6 +62,19 @@ CREATE TABLE IF NOT EXISTS topic_updates (
     change_log TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS raw_articles (
+    id BIGSERIAL PRIMARY KEY,
+    source_name TEXT,
+    source_url TEXT UNIQUE,
+    title TEXT,
+    summary TEXT,
+    content TEXT,
+    category_key TEXT,
+    raw_payload JSONB,
+    published_at TIMESTAMP,
+    ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 SQLITE_SCHEMA = """
@@ -96,6 +109,19 @@ CREATE TABLE IF NOT EXISTS topic_updates (
     change_log TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (topic_id) REFERENCES topics(id)
+);
+
+CREATE TABLE IF NOT EXISTS raw_articles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_name TEXT,
+    source_url TEXT UNIQUE,
+    title TEXT,
+    summary TEXT,
+    content TEXT,
+    category_key TEXT,
+    raw_payload TEXT,
+    published_at TIMESTAMP,
+    ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
 

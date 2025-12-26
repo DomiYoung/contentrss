@@ -193,7 +193,7 @@ erDiagram
 ### 5.1 读接口（访客可读）
 
 **GET `/api/intelligence`**  
-Query: `limit`, `lens`, `tag_keys[]`, `skip_ai`  
+Query: `limit`, `category`, `lens`, `tag_keys[]`, `skip_ai`  
 Resp:
 ```json
 { "count": 5, "cards": [ { "id": 1, "title": "...", "polarity": "negative", "fact": "...", "impacts": [], "opinion": "", "tags": [], "source_name": "", "source_url": "" } ] }
@@ -250,6 +250,124 @@ Body: `{ "article_id": 1, "action": "ignored" }`
 
 ---
 
+### 5.4 响应字段定义（Response Schema）
+
+**通用错误响应**
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| error | string | 是 | 错误信息 |
+
+**Impact**
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| entity | string | 是 | 影响对象 |
+| trend | string | 是 | up / down |
+| reason | string | 是 | 影响原因 |
+
+**IntelligenceCard**
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| id | number | 是 | 文章/卡片 ID |
+| title | string | 是 | 标题 |
+| polarity | string | 是 | positive / negative / neutral |
+| fact | string | 是 | 事实核（2 句内） |
+| impacts | Impact[] | 是 | 影响链 |
+| opinion | string | 否 | AI 观点 |
+| tags | string[] | 是 | 标签 |
+| source_name | string | 否 | 来源名 |
+| source_url | string | 否 | 来源链接 |
+
+**IntelligenceResponse**
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| count | number | 是 | 卡片数量 |
+| cards | IntelligenceCard[] | 是 | 卡片列表 |
+
+**The Brain Summary**
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| thesis | string | 是 | 一行结论 |
+| facts | string[] | 否 | 关键事实 |
+| sentiment | string | 是 | bullish / bearish / neutral |
+
+**ArticleDetailResponse**
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| id | number | 是 | 文章 ID |
+| title | string | 是 | 标题 |
+| polarity | string | 是 | 极性 |
+| fact | string | 是 | 事实核 |
+| impacts | Impact[] | 是 | 影响链 |
+| opinion | string | 否 | AI 观点 |
+| tags | string[] | 是 | 标签 |
+| source_name | string | 否 | 来源名 |
+| source_url | string | 否 | 来源链接 |
+| content | string | 是 | 正文 |
+| summary | object|string | 是 | The Brain（建议对象；兼容 JSON 字符串） |
+| original_url | string | 否 | 原文链接 |
+
+**DailyBriefingResponse**
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| date | string | 是 | yyyy-mm-dd |
+| title | string | 是 | 标题 |
+| subtitle | string | 否 | 副标题 |
+| read_time | string | 是 | 预计阅读时长 |
+| synthesis | string | 是 | 概述 |
+| takeaways | string[] | 是 | TL;DR |
+| top_picks | IntelligenceCard[] | 是 | 关键卡片 |
+| impact_chain | object | 是 | { trigger, path[], conclusion } |
+| framework | object | 否 | { type, title, nodes[] } |
+
+**Entity**
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| id | string | 是 | 实体 ID |
+| name | string | 是 | 实体名 |
+| type | string | 是 | company / industry / topic |
+| icon | string | 否 | 图标 |
+| subscriber_count | number | 是 | 订阅数 |
+| is_subscribed | boolean | 是 | 是否订阅 |
+
+**Tag**
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| id | string | 是 | 标签 ID |
+| name | string | 是 | 标签名 |
+| key | string | 是 | 标签 key |
+| level | string | 是 | category / ai / user |
+| icon | string | 否 | 图标 |
+| color | string | 否 | 颜色 |
+| usageCount | number | 否 | 使用次数 |
+
+**SaveResponse**
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| id | string | 是 | 保存记录 ID |
+| analysis_id | string | 是 | 分析卡片 ID |
+| created_at | string | 是 | 创建时间 |
+
+**NoteResponse**
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| id | string | 是 | 笔记 ID |
+| article_id | number | 是 | 文章 ID |
+| content | string | 是 | 笔记内容 |
+| highlights | object[] | 否 | 高亮段落 |
+| related_entities | string[] | 否 | 关联实体 |
+| created_at | string | 是 | 创建时间 |
+| updated_at | string | 是 | 更新时间 |
+
+**FeedbackResponse**
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| id | string | 是 | 反馈 ID |
+| article_id | number | 是 | 文章 ID |
+| action | string | 是 | ignored / opened / shared |
+| created_at | string | 是 | 创建时间 |
+
+---
+
 ## 6. RLS 建议（Supabase）
 
 **开放读**
@@ -269,4 +387,3 @@ Body: `{ "article_id": 1, "action": "ignored" }`
 - 角色分流：`profiles.primary_lens` 空则通用流  
 - AI 分析落库：`article_analyses` 可保留历史  
 - 笔记即资产：`user_notes` + `user_saves`
-

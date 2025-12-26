@@ -87,16 +87,18 @@
 
 ## 4. 信息架构与导航
 
-**主导航（Tab Bar，4 项）**
+**主导航（Tab Bar，4+1）**
 - Feed（情报）
 - Radar（雷达）
 - Briefing（简报）
+- Data Center（数据，内测/内部入口）
 - Profile/Notes（资产）
 
 **顶层结构**
 Feed = 事实+影响  
 Briefing = 叙事+框架  
 Notes = 个人资产
+Data Center = 原始数据校验
 
 **Profile/Notes 内部**
 - 角色与标签管理（Lens/兴趣标签可随时调整）
@@ -157,12 +159,30 @@ Notes = 个人资产
 - 笔记关联实体与事件
 - 卡片式“历史判断”回看
 
-### 5.8 Viral Poster
+### 5.8 Data Center（Raw Data）
+- 原始文章列表 + 分类标签
+- 字段展开视图（文章信息/标题/URL）
+- 仅展示，不做编辑
+
+**布局结构（高保真）**
+1. 顶部栏：标题「原始数据」+ 计数 + 刷新按钮
+2. 分类标签：8 类横向滚动
+3. 列表卡片（折叠态）：标题 / 摘要 / 来源+ID / 原文按钮
+4. 展开态：Key-Value 原始字段详情
+
+**卡片字段（折叠态）**
+- 标题：`文章信息.文章标题`（兜底 `文章标题-moss用`）
+- 摘要：`文章信息.摘要`（最多 2 行）
+- 来源：`文章信息.作者名称`
+- ID：`fields.自增ID`
+- 原文：`文章信息.文章URL`（图标按钮）
+
+### 5.9 Viral Poster
 - 高对比黑/白模板
 - Watermark: `Internal / Insiders Only`
 - 固定结构：极性 + 事实核 + 影响链 + 来源
 
-### 5.9 关键界面内容与功能清单
+### 5.10 关键界面内容与功能清单
 
 **Onboarding（角色与标签）**
 - 内容：价值主张、角色卡片、兴趣标签、推荐订阅实体、进度指示
@@ -192,11 +212,15 @@ Notes = 个人资产
 - 内容：时间轴、实体筛选、笔记卡片、关联事件
 - 功能：编辑/删除、按实体过滤、回看历史判断
 
+**Data Center（Raw Data）**
+- 内容：分类标签、原始文章列表、字段展开视图
+- 功能：切换分类、刷新、展开字段、打开原文
+
 **Poster（分享）**
 - 内容：极性、事实核、影响链、来源、Watermark
 - 功能：保存图片、系统分享
 
-### 5.10 交互状态表（关键页面）
+### 5.11 交互状态表（关键页面）
 
 | 页面 | 状态 | 触发/说明 |
 | --- | --- | --- |
@@ -227,8 +251,41 @@ Notes = 个人资产
 | Notes | Default | 时间轴列表 |
 | Notes | Empty | 无笔记提示 |
 | Notes | Editing | 编辑/高亮态 |
+| Data Center | Default | 原始列表展示 |
+| Data Center | Loading | 拉取中 |
+| Data Center | Refreshing | 刷新中（顶部轻提示） |
+| Data Center | Empty | 无数据 |
+| Data Center | Error | 拉取失败 |
 | Poster | Preview | 预览展示 |
 | Poster | Saving | 保存中反馈 |
+
+---
+
+### 5.12 数据字段对齐（真实数据）
+
+**Feed 卡片字段（/api/intelligence）**
+- 标题：`title`
+- 事实核：`fact`（AI 失败时可能为空，需隐藏或显示“暂无结论”）
+- 影响链：`impacts[]`（空数组时显示占位或折叠）
+- 观点：`opinion`（空时不展示）
+- 标签：`tags[]`（包含分类中文，如“法律法规/行业洞察”）
+- 来源：`source_name` + `source_url`（为空时不展示）
+
+**原始数据页（Data Center / /api/raw-data）**
+- 列表来源：`/api/raw-data?category={key}`
+- 字段解析：
+  - `fields.文章信息` 为 JSON 字符串：`{ 摘要, 作者名称, 文章标题, 文章URL }`
+  - 兜底字段：`fields.文章标题-moss用`、`fields.自增ID`
+- UI 展示最小集：
+  - 标题（文章标题）
+  - 摘要（文章信息.摘要）
+  - 来源（作者名称）
+  - 原文链接（文章URL）
+  - ID（自增ID）
+
+**标签切换行为**
+- Feed 标签切换：发起 `GET /api/intelligence?category=legal`
+- Data Center 标签切换：发起 `GET /api/raw-data?category=legal`
 
 ---
 
@@ -248,6 +305,7 @@ Notes = 个人资产
 - 长按：海报预览弹出（350ms）
 - 左滑忽略：位移 + 渐隐
 - 关键动作：轻触感（Haptic）
+- 加载状态：Feed 使用骨架卡片（Shimmer/Pulse），Data Center 顶部显示刷新提示
 
 ---
 

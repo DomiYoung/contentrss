@@ -10,12 +10,13 @@ import os
 import json
 import requests
 from dotenv import load_dotenv
-from database import init_db
+from database import init_db, get_db_connection, get_placeholder, is_postgres
 from datetime import datetime
 import hashlib
 from typing import Any, Dict, List, Optional
 
 from services.entities import EntityService
+from services.tag_service import tag_service
 from topics import topic_service
 
 # 加载环境变量
@@ -48,17 +49,17 @@ app = Flask(__name__)
 PROD_ORIGINS = os.getenv('ALLOWED_ORIGINS', '*').split(',')
 CORS(app, origins=PROD_ORIGINS)
 
-# 分类映射
-CATEGORY_MAPPING = {
-    "legal": "法律法规",
-    "digital": "数字化",
-    "brand": "品牌",
-    "rd": "新品研发",
-    "global": "国际形势",
-    "insight": "行业洞察",
-    "ai": "AI",
-    "management": "企业管理"
-}
+
+def get_category_mapping() -> Dict[str, str]:
+    """获取分类映射（从数据库，替代硬编码）"""
+    return tag_service.get_category_mapping()
+
+
+def get_category_label(category_key: str) -> str:
+    """获取分类显示名称"""
+    mapping = get_category_mapping()
+    return mapping.get(category_key, category_key)
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOCAL_RAW_PATH = os.path.join(BASE_DIR, "data", "raw_articles.json")
@@ -79,7 +80,16 @@ def load_local_articles() -> List[Dict[str, Any]]:
 
 
 def get_raw_articles_by_category() -> Dict[str, List[Dict[str, Any]]]:
-    """统一获取原始文章数据（优先 Special API，失败则回退本地）"""
+    """统一获取原始文章数据（优先读库，空再拉 Special，最后回退本地）"""
+    db_data: Dict[str, List[Dict[str, Any]]] = {}
+    for category_key in get_category_mapping().keys():
+        items = fetch_raw_articles_from_db(category_key)
+        if items:
+            db_data[category_key] = items
+
+    if db_data:
+        return db_data
+
     response = fetch_special_data()
     data = parse_special_response(response)
 
@@ -94,6 +104,159 @@ def get_raw_articles_by_category() -> Dict[str, List[Dict[str, Any]]]:
         return data
 
     return {"insight": load_local_articles()}
+
+
+def fetch_special_category_items(category_key: str) -> List[Dict[str, Any]]:
+    response = fetch_special_data()
+    data = parse_special_response(response)
+    if not data:
+        return []
+    if isinstance(data, list):
+        return data if category_key == "insight" else []
+    if isinstance(data, dict):
+        items = data.get(category_key, [])
+        return items if isinstance(items, list) else []
+    return []
+
+
+def _row_value(row: Any, key: str) -> Any:
+    if isinstance(row, dict):
+        return row.get(key)
+    try:
+        return row[key]
+    except Exception:
+        return None
+
+
+def fetch_raw_articles_from_db(category_key: str, limit: int = 200) -> List[Dict[str, Any]]:
+    try:
+        placeholder = get_placeholder()
+        query = f"SELECT raw_payload FROM raw_articles WHERE category_key = {placeholder} ORDER BY ingested_at DESC LIMIT {placeholder}"
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(query, (category_key, limit))
+            rows = cur.fetchall()
+        items: List[Dict[str, Any]] = []
+        for row in rows:
+            payload = _row_value(row, "raw_payload")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    payload = {"raw_payload": payload}
+            if isinstance(payload, dict):
+                items.append(payload)
+        return items
+    except Exception as e:
+        print(f"⚠️ 读取 raw_articles 失败: {e}")
+        return []
+
+
+def is_synced_today(category_key: str) -> bool:
+    """检查该分类今天是否已同步过"""
+    try:
+        placeholder = get_placeholder()
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            if is_postgres():
+                query = f"SELECT 1 FROM raw_articles WHERE category_key = {placeholder} AND ingested_at::date = CURRENT_DATE LIMIT 1"
+            else:
+                query = f"SELECT 1 FROM raw_articles WHERE category_key = {placeholder} AND date(ingested_at) = date('now') LIMIT 1"
+            cur.execute(query, (category_key,))
+            return cur.fetchone() is not None
+    except Exception as e:
+        print(f"⚠️ 检查同步状态失败: {e}")
+        return False
+
+
+def get_articles_for_category(category_key: str) -> List[Dict[str, Any]]:
+    """获取分类文章：今天已同步则查库，否则调 API 同步"""
+    
+    # 1. 今天已同步过 → 直接查库（毫秒级）
+    if is_synced_today(category_key):
+        items = fetch_raw_articles_from_db(category_key)
+        if items:
+            return items
+    
+    # 2. 今天未同步 → 调 Special API（约 8 秒）
+    items = fetch_special_category_items(category_key)
+    if items:
+        persist_raw_items(category_key, items)
+        return items
+    
+    # 3. API 无数据 → 回退查库（可能有历史数据）
+    items = fetch_raw_articles_from_db(category_key)
+    if items:
+        return items
+
+    # 4. insight 分类的本地兜底
+    if category_key == "insight":
+        fallback = load_local_articles()
+        if fallback:
+            persist_raw_items(category_key, fallback)
+            return fallback
+
+    return []
+
+
+
+def persist_raw_items(category_key: str, items: List[Dict[str, Any]]) -> None:
+    if not items:
+        return
+    try:
+        placeholder = get_placeholder()
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            for item in items:
+                normalized = normalize_article(item, category_key)
+                if not normalized:
+                    continue
+                payload = json.dumps(item, ensure_ascii=False)
+
+                if is_postgres():
+                    query = (
+                        "INSERT INTO raw_articles "
+                        "(source_name, source_url, title, summary, content, category_key, raw_payload, published_at) "
+                        f"VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}) "
+                        "ON CONFLICT (source_url) DO UPDATE SET "
+                        "source_name = EXCLUDED.source_name, "
+                        "title = EXCLUDED.title, "
+                        "summary = EXCLUDED.summary, "
+                        "content = EXCLUDED.content, "
+                        "category_key = EXCLUDED.category_key, "
+                        "raw_payload = EXCLUDED.raw_payload, "
+                        "published_at = EXCLUDED.published_at, "
+                        "ingested_at = CURRENT_TIMESTAMP"
+                    )
+                    cur.execute(query, (
+                        normalized["source_name"],
+                        normalized["source_url"],
+                        normalized["title"],
+                        normalized["summary"],
+                        normalized["content"],
+                        category_key,
+                        payload,
+                        None
+                    ))
+                else:
+                    query = (
+                        "INSERT OR REPLACE INTO raw_articles "
+                        "(source_name, source_url, title, summary, content, category_key, raw_payload, published_at, ingested_at) "
+                        f"VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, CURRENT_TIMESTAMP)"
+                    )
+                    cur.execute(query, (
+                        normalized["source_name"],
+                        normalized["source_url"],
+                        normalized["title"],
+                        normalized["summary"],
+                        normalized["content"],
+                        category_key,
+                        payload,
+                        None
+                    ))
+            conn.commit()
+    except Exception as e:
+        print(f"⚠️ 保存 raw_articles 失败: {e}")
 
 
 def safe_json(value: Any) -> Dict[str, Any]:
@@ -164,8 +327,15 @@ def build_summary_payload(analysis: Dict[str, Any], raw_summary: str) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-def build_intelligence_cards(limit: int = 20, skip_ai: bool = False) -> List[Dict[str, Any]]:
-    data = get_raw_articles_by_category()
+def build_intelligence_cards(
+    limit: int = 20,
+    skip_ai: bool = False,
+    category_key: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    if category_key and category_key != "all":
+        data = {category_key: get_articles_for_category(category_key)}
+    else:
+        data = get_raw_articles_by_category()
     cards: List[Dict[str, Any]] = []
     index = 0
 
@@ -193,7 +363,7 @@ def build_intelligence_cards(limit: int = 20, skip_ai: bool = False) -> List[Dic
 
             tags = analysis.get("tags") or []
             if category_key:
-                category_label = CATEGORY_MAPPING.get(category_key, category_key)
+                category_label = get_category_label(category_key)
                 if category_label not in tags:
                     tags.append(category_label)
 
@@ -364,13 +534,11 @@ def health():
 def get_raw_data():
     """获取原始公众号数据（数据中心用）"""
     category = request.args.get('category', 'legal')
-
-    data = get_raw_articles_by_category()
-    items = data.get(category, [])
+    items = get_articles_for_category(category)
 
     return jsonify({
         "category": category,
-        "label": CATEGORY_MAPPING.get(category, category),
+        "label": get_category_label(category),
         "count": len(items),
         "items": items
     })
@@ -381,8 +549,9 @@ def get_intelligence():
     """获取 AI 分析后的情报卡片（首页用）"""
     limit = int(request.args.get('limit', 20))
     skip_ai = request.args.get('skip_ai', 'false').lower() == 'true'
+    category = request.args.get('category')
 
-    cards = build_intelligence_cards(limit=limit, skip_ai=skip_ai)
+    cards = build_intelligence_cards(limit=limit, skip_ai=skip_ai, category_key=category)
 
     return jsonify({
         "count": len(cards),
@@ -395,7 +564,8 @@ def get_feed():
     """兼容旧前端的 Feed 接口（返回数组）"""
     limit = int(request.args.get('limit', 20))
     skip_ai = request.args.get('skip_ai', 'false').lower() == 'true'
-    cards = build_intelligence_cards(limit=limit, skip_ai=skip_ai)
+    category = request.args.get('category')
+    cards = build_intelligence_cards(limit=limit, skip_ai=skip_ai, category_key=category)
     return jsonify(cards)
 
 
@@ -418,7 +588,7 @@ def get_article_detail(article_id: int):
         analysis = analyze_article(article["title"], article["summary"])
 
     tags = analysis.get("tags") or []
-    category_label = CATEGORY_MAPPING.get(article["category_key"], article["category_key"])
+    category_label = get_category_label(article["category_key"])
     if category_label and category_label not in tags:
         tags.append(category_label)
 
@@ -445,7 +615,7 @@ def get_categories():
     """获取所有分类（兼容旧 API）"""
     return jsonify({
         "categories": [
-            {"id": k, "label": v} for k, v in CATEGORY_MAPPING.items()
+            {"id": k, "label": v} for k, v in get_category_mapping().items()
         ]
     })
 
