@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS raw_articles (
 
 CREATE TABLE IF NOT EXISTS reading_records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    article_id INTEGER NOT NULL,
+    article_id TEXT NOT NULL,
     device_id TEXT NOT NULL,
     started_at TEXT DEFAULT CURRENT_TIMESTAMP,
     duration_seconds INTEGER DEFAULT 0,
@@ -214,7 +214,7 @@ CREATE TABLE IF NOT EXISTS raw_articles (
 
 CREATE TABLE IF NOT EXISTS reading_records (
     id SERIAL PRIMARY KEY,
-    article_id INTEGER NOT NULL,
+    article_id TEXT NOT NULL,
     device_id TEXT NOT NULL,
     started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     duration_seconds INTEGER DEFAULT 0,

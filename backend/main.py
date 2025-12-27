@@ -54,6 +54,10 @@ app = Flask(__name__)
 PROD_ORIGINS = os.getenv('ALLOWED_ORIGINS', 'http://localhost:16889,http://localhost:5173').split(',')
 CORS(app, origins=PROD_ORIGINS, supports_credentials=True)
 
+# 统一响应工具
+from utils.response import success, error, not_found, bad_request, internal_error, register_error_handlers, validate_json
+register_error_handlers(app)
+
 
 def get_category_mapping() -> Dict[str, str]:
     """获取分类映射（从数据库，替代硬编码）"""
@@ -669,8 +673,50 @@ def analyze_article(title: str, summary: str) -> dict:
 @app.route('/api/health', methods=['GET'])
 def health():
     """健康检查"""
-    return jsonify({"status": "ok", "model": DEFAULT_MODEL})
+    return success(data={"status": "ok", "model": DEFAULT_MODEL})
 
+
+@app.route('/api/sync/trigger', methods=['POST'])
+def trigger_sync():
+    """
+    定时任务触发点 - 主动刷新数据
+    可由 Vercel Cron / Railway Cron / 外部调度器调用
+    需要 X-Cron-Key 头部验证（生产环境）
+    """
+    cron_secret = os.getenv('CRON_SECRET')
+    if cron_secret and request.headers.get('X-Cron-Key') != cron_secret:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    try:
+        data = get_raw_articles_by_category()
+        synced_count = sum(len(articles) for articles in data.values())
+        return success(
+            data={"synced": True, "categories": list(data.keys()), "total_articles": synced_count},
+            meta={"timestamp": datetime.now().isoformat()}
+        )
+    except Exception as e:
+        return internal_error(str(e))
+
+
+@app.route('/api/sync/status', methods=['GET'])
+def sync_status():
+    """获取各分类的最后同步时间"""
+    category_keys = list(get_category_mapping().keys())
+    _, last_sync_map = fetch_all_raw_articles_with_metadata(category_keys, limit_per_cat=1)
+    
+    now = datetime.now()
+    status = {}
+    for key in category_keys:
+        last_sync = last_sync_map.get(key)
+        status[key] = {
+            "last_sync": last_sync.isoformat() if last_sync else None,
+            "is_today": last_sync.date() >= now.date() if last_sync else False
+        }
+    
+    return jsonify({
+        "current_time": now.isoformat(),
+        "categories": status
+    })
 
 @app.route('/api/raw-data', methods=['GET'])
 def get_raw_data():
@@ -678,12 +724,10 @@ def get_raw_data():
     category = request.args.get('category', 'legal')
     items = get_articles_for_category(category)
 
-    return jsonify({
-        "category": category,
-        "label": get_category_label(category),
-        "count": len(items),
-        "items": items
-    })
+    return success(
+        data={"category": category, "label": get_category_label(category), "items": items},
+        meta={"count": len(items)}
+    )
 
 
 @app.route('/api/intelligence', methods=['GET'])
@@ -697,10 +741,10 @@ def get_intelligence():
 
     cards = build_intelligence_cards(limit=limit, skip_ai=skip_ai, category_key=category)
 
-    return jsonify({
-        "count": len(cards),
-        "cards": cards
-    })
+    return success(
+        data={"cards": cards},
+        meta={"count": len(cards)}
+    )
 
 
 @app.route('/api/feed', methods=['GET'])
@@ -796,6 +840,7 @@ def get_article_tags(article_id):
 
 
 @app.route('/api/reading-record', methods=['POST'])
+@validate_json('article_id', 'device_id')
 def save_reading_record():
     """保存用户阅读时间记录"""
     data = request.get_json()
@@ -805,9 +850,6 @@ def save_reading_record():
     duration_seconds = data.get('duration_seconds', 0)
     completed = data.get('completed', False)
     
-    if not article_id or not device_id:
-        return jsonify({"error": "Missing article_id or device_id"}), 400
-    
     try:
         ph = get_placeholder()
         with db_conn() as conn:
@@ -815,13 +857,13 @@ def save_reading_record():
             cur.execute(f"""
                 INSERT INTO reading_records (article_id, device_id, duration_seconds, completed)
                 VALUES ({ph}, {ph}, {ph}, {ph})
-            """, (article_id, device_id, duration_seconds, 1 if completed else 0))
+            """, (article_id, device_id, duration_seconds, completed))
             conn.commit()
         
-        return jsonify({"success": True})
+        return success()
     except Exception as e:
         print(f"❌ 保存阅读记录失败: {e}")
-        return jsonify({"error": str(e)}), 500
+        return internal_error(str(e))
 
 
 @app.route('/api/reading-stats', methods=['GET'])
@@ -959,3 +1001,12 @@ else:
     # 生产环境 (Gunicorn 启动) 初始化
     from database import init_db
     init_db()
+    
+    # 启动时预热：检查并同步今日数据
+    if os.getenv('ENABLE_STARTUP_SYNC', 'true').lower() == 'true':
+        try:
+            print("🔄 生产环境启动预热...")
+            get_raw_articles_by_category()
+            print("✅ 数据预热完成")
+        except Exception as e:
+            print(f"⚠️ 启动预热失败（不影响服务）: {e}")

@@ -44,6 +44,15 @@ export interface IntelligenceResponse {
     cards: IntelligenceCard[];
 }
 
+// 统一后端响应格式 (backend-expert 规范)
+interface ApiResponse<T> {
+    success: boolean;
+    data?: T;
+    meta?: { count?: number; timestamp?: string;[key: string]: unknown };
+    error?: { code: string; message: string; details?: string[] };
+    request_id?: string;
+}
+
 /**
  * 获取 AI 分析后的情报卡片（调用后端 /api/intelligence）
  * 支持 IndexedDB 缓存，同一天内复用缓存
@@ -71,7 +80,14 @@ export async function fetchIntelligence(
             if (!response.ok) {
                 throw new Error(`Intelligence API Error: ${response.status}`);
             }
-            return response.json();
+            const json: ApiResponse<{ cards: IntelligenceCard[] }> = await response.json();
+            if (!json.success) {
+                throw new Error(json.error?.message || 'API Error');
+            }
+            return {
+                cards: json.data?.cards || [],
+                count: json.meta?.count || 0
+            };
         },
         forceRefresh
     );
@@ -172,7 +188,22 @@ export async function fetchRawData(category: string, forceRefresh: boolean = fal
 
     return fetchWithCache<RawDataResponse>(
         cacheKey,
-        async () => request(`${API_BASE}/raw-data?category=${safeCategory}`),
+        async () => {
+            const response = await fetch(`${API_BASE}/raw-data?category=${safeCategory}`);
+            if (!response.ok) {
+                throw new Error(`Raw Data API Error: ${response.status}`);
+            }
+            const json: ApiResponse<{ category: string; label: string; items: Array<Record<string, unknown>> }> = await response.json();
+            if (!json.success) {
+                throw new Error(json.error?.message || 'API Error');
+            }
+            return {
+                category: json.data?.category || category,
+                label: json.data?.label || '',
+                count: json.meta?.count || 0,
+                items: json.data?.items || []
+            };
+        },
         forceRefresh
     );
 }

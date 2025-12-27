@@ -28,7 +28,7 @@ interface ArticleItem {
 }
 
 // 模拟图片生成器 (基于分类)
-const getCategoryImage = (categoryId: string, index: number) => {
+const getCategoryImage = (_categoryId: string, index: number) => {
     const images = [
         "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?w=800&q=80", // AI
         "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=800&q=80",     // Tech
@@ -88,7 +88,7 @@ interface ArticleDetailViewProps {
 // 内嵌的详情页组件 - Premium Design
 function ArticleDetailView({ article, onBack }: ArticleDetailViewProps) {
     // 阅读时间追踪
-    const { markCompleted } = useReadingTracker({
+    const { markCompleted: _markCompleted } = useReadingTracker({
         articleId: article.id,
         onComplete: () => console.log('阅读完成:', article.id)
     });
@@ -161,8 +161,10 @@ function ArticleDetailView({ article, onBack }: ArticleDetailViewProps) {
                 <div className="bg-[#f8fafc] rounded-2xl p-5 mb-6 border border-gray-100">
                     {/* Header */}
                     <div className="flex items-center gap-2 mb-4">
-                        <div className="w-7 h-7 rounded-full bg-blue-500 flex items-center justify-center">
-                            <span className="text-white text-sm">?</span>
+                        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M12 3l1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3Z" />
+                            </svg>
                         </div>
                         <span className="text-sm font-bold text-blue-600 tracking-wide">AI 导读 (THE BRAIN)</span>
                     </div>
@@ -265,14 +267,16 @@ function ArticleDetailView({ article, onBack }: ArticleDetailViewProps) {
                 </div>
 
                 {/* Hero Image with Caption */}
-                <figure className="my-8 -mx-5">
-                    <img
-                        src={article.imageUrl}
-                        alt={article.title}
-                        className="w-full aspect-[16/10] object-cover"
-                    />
-                    <figcaption className="px-5 pt-2 text-xs text-gray-400 italic">
-                        Figure 1: {article.category} 相关图表
+                <figure className="my-8">
+                    <div className="rounded-2xl overflow-hidden shadow-sm border border-gray-100">
+                        <img
+                            src={article.imageUrl}
+                            alt={article.title}
+                            className="w-full aspect-[16/10] object-cover"
+                        />
+                    </div>
+                    <figcaption className="pt-3 text-xs text-gray-400 italic text-center">
+                        {article.category} 相关配图
                     </figcaption>
                 </figure>
             </article>
