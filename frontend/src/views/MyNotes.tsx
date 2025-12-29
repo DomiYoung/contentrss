@@ -45,25 +45,25 @@ export function MyNotes({ onBack }: MyNotesProps) {
     };
 
     return (
-        <div className="min-h-screen bg-background-light dark:bg-background-dark font-display text-gray-900 dark:text-gray-100 pb-20">
-            <div className="max-w-md mx-auto min-h-screen bg-white dark:bg-surface-dark relative shadow-xl overflow-hidden flex flex-col">
+        <div className="h-full flex flex-col bg-white text-gray-900">
+            {/* Fixed Header */}
+            <header className="flex-shrink-0 bg-white/95 backdrop-blur-md px-5 py-4 flex items-center gap-4 border-b border-gray-100">
+                <button
+                    onClick={() => {
+                        triggerHaptic("light");
+                        onBack();
+                    }}
+                    className="p-2 -ml-2 rounded-full hover:bg-gray-100 active:scale-95 transition-all"
+                >
+                    <ArrowLeft size={22} className="text-gray-900" />
+                </button>
+                <h1 className="text-lg font-bold text-gray-900">我的笔记</h1>
+            </header>
 
-                {/* Header */}
-                <div className="sticky top-0 bg-white/90 dark:bg-surface-dark/90 backdrop-blur-md z-10 px-4 h-14 flex items-center gap-4 border-b border-gray-100 dark:border-white/5">
-                    <button
-                        onClick={() => {
-                            triggerHaptic("light");
-                            onBack();
-                        }}
-                        className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-white/10 text-gray-800 dark:text-white"
-                    >
-                        <ArrowLeft size={24} />
-                    </button>
-                    <h1 className="text-lg font-bold text-gray-900 dark:text-white">我的笔记</h1>
-                </div>
-
+            {/* Scrollable Content */}
+            <main className="flex-1 overflow-y-auto">
                 {/* Search */}
-                <div className="p-4">
+                <div className="px-5 py-4">
                     <div className="relative">
                         <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-gray-400">
                             <Search size={18} />
@@ -73,30 +73,30 @@ export function MyNotes({ onBack }: MyNotesProps) {
                             placeholder="搜索笔记..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full bg-gray-50 dark:bg-white/5 border-none rounded-xl py-3 pl-11 pr-4 text-sm font-medium focus:ring-2 focus:ring-blue-100 placeholder:text-gray-400"
+                            className="w-full bg-gray-100 border-none rounded-2xl py-3.5 pl-12 pr-4 text-sm font-medium focus:ring-2 focus:ring-blue-100 placeholder:text-gray-400"
                         />
                     </div>
                 </div>
 
                 {/* Notes List */}
-                <div className="flex-1 px-4 space-y-3 pb-8">
+                <div className="px-5 pb-24 space-y-4">
                     {notes.map(note => (
-                        <div key={note.id} className="bg-white dark:bg-white/5 border border-gray-100 dark:border-white/5 p-4 rounded-2xl shadow-sm active:scale-[0.99] transition-transform">
-                            <div className="flex justify-between items-start mb-2">
-                                <h3 className="font-bold text-gray-900 dark:text-white leading-tight">
+                        <div key={note.id} className="bg-white border border-gray-100 p-5 rounded-2xl shadow-sm active:scale-[0.99] transition-transform">
+                            <div className="flex justify-between items-start mb-3">
+                                <h3 className="font-bold text-gray-900 leading-tight text-[15px]">
                                     {note.title}
                                 </h3>
-                                <button className="text-gray-400 p-1 -mr-2">
+                                <button className="text-gray-400 p-1 -mr-2 hover:text-gray-600">
                                     <MoreHorizontal size={18} />
                                 </button>
                             </div>
-                            <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mb-3 leading-relaxed">
+                            <p className="text-xs text-gray-500 line-clamp-2 mb-4 leading-relaxed">
                                 {note.preview}
                             </p>
                             <div className="flex items-center justify-between">
                                 <div className="flex gap-2">
                                     {note.tags.map(tag => (
-                                        <span key={tag} className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${tagColors[tag] || "bg-gray-100 text-gray-500"}`}>
+                                        <span key={tag} className={`px-2.5 py-1 rounded-lg text-[10px] font-bold ${tagColors[tag] || "bg-gray-100 text-gray-500"}`}>
                                             {tag}
                                         </span>
                                     ))}
@@ -108,7 +108,7 @@ export function MyNotes({ onBack }: MyNotesProps) {
                         </div>
                     ))}
                 </div>
-            </div>
+            </main>
         </div>
     );
 }

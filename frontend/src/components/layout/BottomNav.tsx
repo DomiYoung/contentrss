@@ -33,7 +33,7 @@ export function BottomNav({ activeTab, onTabChange }: BottomNavProps) {
     };
 
     return (
-        <div className="fixed bottom-0 left-0 right-0 bg-[#FAF9F6]/95 backdrop-blur-2xl border-t border-zinc-200/50 z-50 pb-safe shadow-[0_-4px_12px_rgba(0,0,0,0.03)]">
+        <div className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-2xl border-t border-gray-100 z-50 pb-safe shadow-[0_-4px_12px_rgba(0,0,0,0.03)]">
             <div className="flex justify-around items-center h-16 max-w-md mx-auto px-4">
                 {tabs.map((tab) => {
                     const Icon = tab.icon;
@@ -45,20 +45,20 @@ export function BottomNav({ activeTab, onTabChange }: BottomNavProps) {
                             className="relative flex flex-col items-center justify-center flex-1 h-full gap-1 group active:scale-90 transition-transform duration-200"
                         >
                             {isActive && (
-                                <div className="absolute top-0 w-8 h-1 bg-zinc-900 rounded-b-full animate-in slide-in-from-top-2 duration-300" />
+                                <div className="absolute top-0 w-8 h-1 bg-gray-900 rounded-b-full animate-in slide-in-from-top-2 duration-300" />
                             )}
                             <Icon
                                 size={22}
                                 strokeWidth={isActive ? 2.5 : 2}
                                 className={cn(
                                     "transition-all duration-300",
-                                    isActive ? "text-zinc-900 scale-110" : "text-zinc-400 group-hover:text-zinc-600"
+                                    isActive ? "text-gray-900 scale-110" : "text-gray-400 group-hover:text-gray-600"
                                 )}
                             />
                             <span
                                 className={cn(
                                     "text-[9px] font-black uppercase tracking-[0.15em] transition-colors duration-300",
-                                    isActive ? "text-zinc-900" : "text-zinc-400 group-hover:text-zinc-500"
+                                    isActive ? "text-gray-900" : "text-gray-400 group-hover:text-gray-500"
                                 )}
                             >
                                 {tab.label}
