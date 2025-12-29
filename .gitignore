@@ -45,3 +45,7 @@ frontend/dist/
 
 # Specify (local tool config)
 .specify/
+
+# Claude Code (local tool config with potential API credentials)
+.claude/
+.claude.md
