@@ -54,21 +54,24 @@ export function EntityRadar() {
     };
 
     return (
-        <div className="min-h-screen bg-background-light dark:bg-background-dark font-display text-gray-900 dark:text-gray-100 pb-24">
-            <div className="max-w-md mx-auto min-h-screen bg-white dark:bg-surface-dark relative shadow-xl overflow-hidden px-5 pt-8">
-
-                {/* Header */}
-                <div className="mb-6">
-                    <h1 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white mb-2">
+        <div className="h-full flex flex-col bg-white text-gray-900">
+            {/* Fixed Header */}
+            <header className="flex-shrink-0 px-5 py-4 bg-white/95 backdrop-blur-md border-b border-gray-100">
+                <div className="mb-0">
+                    <h1 className="text-2xl font-bold tracking-tight text-gray-900">
                         实体雷达
                     </h1>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                    <p className="text-xs text-gray-500 mt-0.5">
                         个性化订阅 · 追踪关注
                     </p>
                 </div>
+            </header>
+
+            {/* Scrollable Content */}
+            <main className="flex-1 overflow-y-auto px-5 pb-8 pt-4">
 
                 {/* Search Bar */}
-                <div className="relative mb-6">
+                <div className="relative mb-5">
                     <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-gray-400">
                         <Search size={20} />
                     </div>
@@ -173,7 +176,7 @@ export function EntityRadar() {
                         </button>
                     ))}
                 </div>
-            </div>
+            </main>
         </div>
     );
 }
