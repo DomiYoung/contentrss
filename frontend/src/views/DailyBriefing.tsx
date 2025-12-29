@@ -1,106 +1,133 @@
 import { useState, useEffect } from "react";
 import {
-    ArrowLeft, Bookmark, Share2, Search,
-    ChevronRight
+    ArrowLeft, Share2, Calendar, TrendingUp, Sparkles, ChevronRight, Star
 } from "lucide-react";
 import { fetchDailyBriefing } from "@/lib/api";
 import { triggerHaptic } from "@/lib/haptic";
+import { PageSkeleton } from "@/components/PageSkeleton";
 import type { DailyBriefingData } from "@/types/briefing";
 
 interface DailyBriefingProps {
     onBack: () => void;
 }
 
-// 情绪徽章组件 - 亮色主题
-function SentimentBadge({ polarity }: { polarity: string }) {
-    const config = {
-        positive: { label: "BULLISH", bg: "bg-emerald-50", text: "text-emerald-600", border: "border-emerald-200" },
-        negative: { label: "BEARISH", bg: "bg-rose-50", text: "text-rose-600", border: "border-rose-200" },
-        neutral: { label: "NEUTRAL", bg: "bg-gray-100", text: "text-gray-600", border: "border-gray-200" },
-    };
-    const style = config[polarity as keyof typeof config] || config.neutral;
+// 编辑寄语区域
+function EditorNote({ date }: { date: string }) {
     return (
-        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${style.bg} ${style.text} border ${style.border}`}>
-            {style.label}
-        </span>
+        <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-3xl p-6 border border-amber-100/50">
+            <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
+                    <Sparkles size={18} className="text-white" />
+                </div>
+                <div>
+                    <p className="text-[10px] text-amber-600 font-bold uppercase tracking-widest">编辑寄语</p>
+                    <p className="text-xs text-gray-500">{date}</p>
+                </div>
+            </div>
+            <p className="text-[15px] text-gray-800 leading-relaxed font-medium">
+                早安！今日科技圈风起云涌，AI 芯片供应链持续紧张，新能源汽车市场迎来重要拐点。
+                我们为您精选了最具价值的行业洞察，助您把握先机。
+            </p>
+        </div>
     );
 }
 
-// IMPACT CHAIN 组件 - 亮色主题
-function ImpactChain({ path }: { path: string[] }) {
-    if (!path || path.length === 0) return null;
+// 今日焦点 - 大卡片
+function FeaturedStory({ article }: { article: any }) {
+    if (!article) return null;
     return (
-        <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
-            <div className="flex items-center gap-2 mb-3">
-                <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">✦ IMPACT CHAIN</span>
+        <div className="relative overflow-hidden rounded-3xl bg-gray-900">
+            {/* 背景渐变 */}
+            <div className="absolute inset-0 bg-gradient-to-br from-blue-600/20 to-purple-600/20" />
+            <div className="absolute top-0 right-0 w-40 h-40 bg-blue-500/10 rounded-full blur-3xl" />
+
+            <div className="relative p-6">
+                <div className="flex items-center gap-2 mb-4">
+                    <Star size={14} className="text-amber-400 fill-amber-400" />
+                    <span className="text-[10px] text-amber-400 font-bold uppercase tracking-widest">今日焦点</span>
+                </div>
+
+                <h2 className="text-[22px] font-black text-white leading-tight mb-3">
+                    {article.title || "AI 芯片供应链重大调整，影响全球科技格局"}
+                </h2>
+
+                <p className="text-sm text-gray-300 leading-relaxed mb-4 line-clamp-2">
+                    {article.summary || "行业专家分析认为，此次调整将对未来两年的市场格局产生深远影响..."}
+                </p>
+
+                <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-400">{article.source_name || "行业分析"} · 5 分钟阅读</span>
+                    <button className="flex items-center gap-1.5 text-blue-400 text-sm font-medium">
+                        阅读全文 <ChevronRight size={16} />
+                    </button>
+                </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-                {path.map((item, i) => (
-                    <span key={i} className="flex items-center gap-2">
-                        <span className={i === path.length - 1 ? "text-blue-600 font-medium" : "text-gray-800"}>
-                            {item}
-                        </span>
-                        {i < path.length - 1 && <ChevronRight size={14} className="text-gray-300" />}
-                    </span>
+        </div>
+    );
+}
+
+// 市场脉搏区域
+function MarketPulse() {
+    const trends = [
+        { label: "AI 芯片", trend: "+12%", positive: true },
+        { label: "新能源车", trend: "+8%", positive: true },
+        { label: "消费电子", trend: "-3%", positive: false },
+    ];
+
+    return (
+        <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100">
+            <div className="flex items-center gap-2 mb-4">
+                <TrendingUp size={16} className="text-blue-600" />
+                <span className="text-sm font-bold text-gray-900">市场脉搏</span>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+                {trends.map((item, i) => (
+                    <div key={i} className="text-center">
+                        <p className="text-xs text-gray-500 mb-1">{item.label}</p>
+                        <p className={`text-lg font-bold ${item.positive ? "text-emerald-600" : "text-rose-600"}`}>
+                            {item.trend}
+                        </p>
+                    </div>
                 ))}
             </div>
         </div>
     );
 }
 
-// 单条情报卡片 - 亮色主题
-function BriefingCard({ article, polarity }: { article: any; polarity: string }) {
-    const timeAgo = "2h ago"; // 简化处理
+// 编辑精选卡片
+function CuratedCard({ article, index }: { article: any; index: number }) {
     return (
-        <div className="bg-white rounded-2xl p-5 border border-gray-100 relative overflow-hidden shadow-sm">
-            {/* 右侧装饰图 */}
-            <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-blue-50 to-transparent rounded-bl-3xl" />
-
-            {/* 来源 + 情绪徽章 */}
-            <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-bold text-gray-600">
-                        {article.source_name?.[0] || "B"}
-                    </div>
-                    <span className="text-xs text-gray-500 font-medium">{article.source_name || "Bloomberg"} • {timeAgo}</span>
-                </div>
-                <SentimentBadge polarity={polarity} />
+        <div className="flex gap-4 py-4 border-b border-gray-100 last:border-0">
+            <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center flex-shrink-0">
+                <span className="text-sm font-bold text-blue-600">{index + 1}</span>
             </div>
-
-            {/* 标题 */}
-            <h3 className="text-xl font-bold text-gray-900 leading-snug mb-4 pr-8">
-                {article.title}
-            </h3>
-
-            {/* Impact Chain */}
-            <ImpactChain path={article.impacts?.map((i: any) => `${i.entity} ${i.trend}`) || ["Supply Increase", "Auto Production Up", "Margin Recovery"]} />
-
-            {/* 标签 + 操作 */}
-            <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
-                <div className="flex gap-2">
-                    {(article.tags || ["#Industry", "#Tech"]).slice(0, 2).map((tag: string, i: number) => (
-                        <span key={i} className="text-xs text-gray-500 bg-gray-100 px-2.5 py-1 rounded-lg">
-                            {tag.startsWith("#") ? tag : `#${tag}`}
-                        </span>
-                    ))}
-                </div>
-                <div className="flex items-center gap-3">
-                    <button onClick={() => triggerHaptic("light")} className="text-gray-400 hover:text-gray-900 transition-colors">
-                        <Bookmark size={18} />
-                    </button>
-                    <button onClick={() => triggerHaptic("light")} className="text-gray-400 hover:text-gray-900 transition-colors">
-                        <Share2 size={18} />
-                    </button>
+            <div className="flex-1 min-w-0">
+                <h3 className="text-[15px] font-bold text-gray-900 leading-snug mb-1 line-clamp-2">
+                    {article.title}
+                </h3>
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                    <span>{article.source_name || "来源"}</span>
+                    <span>·</span>
+                    <span>{article.reading_time || "3 分钟"}</span>
                 </div>
             </div>
+            <ChevronRight size={18} className="text-gray-300 flex-shrink-0 mt-1" />
         </div>
     );
 }
 
+// --- Main View ---
+
 export function DailyBriefing({ onBack }: DailyBriefingProps) {
     const [data, setData] = useState<DailyBriefingData | null>(null);
     const [loading, setLoading] = useState(true);
-    const [activeTab, setActiveTab] = useState("forYou");
+
+    const today = new Date().toLocaleDateString("zh-CN", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        weekday: "long"
+    });
 
     useEffect(() => {
         fetchDailyBriefing()
@@ -119,20 +146,14 @@ export function DailyBriefing({ onBack }: DailyBriefingProps) {
     };
 
     if (loading) {
-        return (
-            <div className="h-full flex flex-col items-center justify-center gap-4 bg-white">
-                <div className="w-8 h-8 border-2 border-blue-100 border-t-blue-500 rounded-full animate-spin" />
-            </div>
-        );
+        return <PageSkeleton hasTabs={false} itemCount={4} />;
     }
 
     if (!data) return <div className="h-full flex flex-col items-center justify-center bg-white text-gray-900">Failed to load</div>;
 
-    const tabs = [
-        { id: "forYou", label: "For You" },
-        { id: "trending", label: "Trending" },
-        { id: "sectors", label: "Sectors" },
-    ];
+    // 将数据分为焦点和精选
+    const featured = data.top_picks[0];
+    const curated = data.top_picks.slice(1, 6);
 
     return (
         <div className="h-full flex flex-col bg-white text-gray-900">
@@ -142,45 +163,45 @@ export function DailyBriefing({ onBack }: DailyBriefingProps) {
                     <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-gray-100 active:scale-95 transition-all">
                         <ArrowLeft size={22} className="text-gray-900" />
                     </button>
-                    <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-sm font-bold text-white">
-                            👤
-                        </div>
-                        <span className="text-lg font-bold text-gray-900">Briefing</span>
+                    <div>
+                        <p className="text-[10px] text-amber-600 font-bold uppercase tracking-widest">Daily Newsletter</p>
+                        <h1 className="text-lg font-black text-gray-900 -mt-0.5">今日内参</h1>
                     </div>
                 </div>
-                <button className="p-2 rounded-full hover:bg-gray-100 transition-colors text-gray-500">
-                    <Search size={20} />
-                </button>
+                <div className="flex items-center gap-2">
+                    <button className="p-2 rounded-full hover:bg-gray-100 transition-colors text-gray-500">
+                        <Calendar size={20} />
+                    </button>
+                    <button className="p-2 rounded-full hover:bg-gray-100 transition-colors text-gray-500">
+                        <Share2 size={20} />
+                    </button>
+                </div>
             </header>
 
-            {/* Scrollable Content */}
+            {/* Scrollable Content - Newsletter Style */}
             <main className="flex-1 overflow-y-auto">
-                {/* Tabs */}
-                <div className="px-5 py-4 flex gap-2">
-                    {tabs.map(tab => (
-                        <button
-                            key={tab.id}
-                            onClick={() => setActiveTab(tab.id)}
-                            className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${activeTab === tab.id
-                                    ? "bg-gray-900 text-white"
-                                    : "bg-gray-100 text-gray-500 hover:bg-gray-200"
-                                }`}
-                        >
-                            {tab.label}
-                        </button>
-                    ))}
-                </div>
+                <div className="px-5 py-6 space-y-6 pb-24">
+                    {/* 编辑寄语 */}
+                    <EditorNote date={today} />
 
-                {/* Cards */}
-                <div className="px-5 pb-24 space-y-4">
-                    {data.top_picks.map((article, idx) => (
-                        <BriefingCard
-                            key={article.id || idx}
-                            article={article}
-                            polarity={article.polarity || (idx % 3 === 0 ? "positive" : idx % 3 === 1 ? "negative" : "neutral")}
-                        />
-                    ))}
+                    {/* 今日焦点 */}
+                    <FeaturedStory article={featured} />
+
+                    {/* 市场脉搏 */}
+                    <MarketPulse />
+
+                    {/* 编辑精选 */}
+                    <div>
+                        <div className="flex items-center gap-2 mb-2">
+                            <Sparkles size={14} className="text-gray-400" />
+                            <span className="text-xs font-bold text-gray-500 uppercase tracking-widest">编辑精选</span>
+                        </div>
+                        <div className="bg-white rounded-2xl border border-gray-100 px-4">
+                            {curated.map((article, idx) => (
+                                <CuratedCard key={article.id || idx} article={article} index={idx} />
+                            ))}
+                        </div>
+                    </div>
                 </div>
             </main>
         </div>
