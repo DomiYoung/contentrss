@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Search, Plus, Briefcase, Hash, Factory } from "lucide-react";
 import { fetchEntities, toggleSubscription } from "@/lib/api";
 import { triggerHaptic } from "@/lib/haptic";
-import { PageSkeleton } from "@/components/PageSkeleton";
 import type { Entity } from "@/types/entities";
 import { Sparkles, TrendingUp, BarChart3, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";

@@ -21,7 +21,7 @@ export default defineConfig({
     proxy: {
       '/api': {
         // 开发环境使用本地后端
-        target: 'http://localhost:5001',
+        target: 'http://localhost:8000',
         changeOrigin: true,
       }
     }

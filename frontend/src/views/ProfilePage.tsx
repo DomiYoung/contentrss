@@ -4,7 +4,8 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { triggerHaptic } from "@/lib/haptic";
-import { usePersona, PERSONAS, PersonaType } from "@/context/PersonaContext";
+import { usePersona, PERSONAS } from "@/context/PersonaContext";
+import type { PersonaType } from "@/context/PersonaContext";
 import { cn } from "@/lib/utils";
 
 interface ProfilePageProps {

@@ -99,12 +99,17 @@ ContentRSS 是一个 **Industry Intelligence OS**，面向专业人士提供 AI 
 ```bash
 # 前端开发
 cd frontend && npm run dev
+# 访问地址: http://localhost:5173
 
-# 后端开发
-cd backend && uvicorn main:app --reload
+# 后端开发 (端口: 8000)
+cd backend && python3 main.py
+# 访问地址: http://localhost:8000
 
 # 运行测试
 python scripts/with_server.py tests/v2_regression_test.py
+
+# 性能测试
+cd backend && bash test_performance.sh
 ```
 
 ---

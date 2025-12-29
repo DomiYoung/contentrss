@@ -85,7 +85,7 @@ const IntelligenceCardItem = ({ article, onClick, onDislike }: IntelligenceCardP
                         </div>
                         <div className="flex flex-col">
                             <span className="text-[11px] font-black text-gray-900 leading-none mb-0.5">{article.source_name || "Bloomberg"}</span>
-                            <span className="text-[9px] text-gray-300 font-bold uppercase tracking-widest">Premium Intelligence</span>
+                            <span className="text-[9px] text-gray-300 font-bold uppercase tracking-widest">精选情报</span>
                         </div>
                     </div>
                     <SentimentBadge polarity={article.polarity} />
@@ -120,22 +120,22 @@ const IntelligenceCardItem = ({ article, onClick, onDislike }: IntelligenceCardP
 // --- Main View ---
 
 export function IntelligenceView() {
-    const [activeTab, setActiveTab] = useState("For You");
+    const [activeTab, setActiveTab] = useState("推荐");
     const [articles, setArticles] = useState<IntelligenceCard[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedArticle, setSelectedArticle] = useState<IntelligenceCard | null>(null);
 
     // 智能排序与过滤逻辑
     const sortedArticles = useMemo(() => {
-        if (activeTab === "Trending") {
-            // Trending: 按影响链长度或实体数量排序
+        if (activeTab === "热门") {
+            // 热门: 按影响链长度或实体数量排序
             return [...articles].sort((a, b) => (b.impacts?.length || 0) - (a.impacts?.length || 0));
         }
-        if (activeTab === "Sectors") {
-            // Sectors: 简单模拟分类排序
+        if (activeTab === "行业") {
+            // 行业: 简单模拟分类排序
             return [...articles].sort((a, b) => (a.tags?.[0] || "").localeCompare(b.tags?.[0] || ""));
         }
-        return articles; // For You: 默认顺序
+        return articles; // 推荐: 默认顺序
     }, [articles, activeTab]);
 
     useEffect(() => {
@@ -219,8 +219,8 @@ export function IntelligenceView() {
         <div className="h-full flex flex-col bg-white text-gray-900">
             <header className="flex-shrink-0 px-5 py-4 flex items-center justify-between bg-white/80 backdrop-blur-xl border-b border-gray-50/50">
                 <div className="flex flex-col">
-                    <span className="text-[10px] font-black text-amber-600 uppercase tracking-[0.2em] mb-0.5">Morning Edition</span>
-                    <h1 className="text-[22px] font-black tracking-tight text-gray-900 leading-none">Briefing</h1>
+                    <span className="text-[10px] font-black text-amber-600 uppercase tracking-[0.2em] mb-0.5">晨间版</span>
+                    <h1 className="text-[22px] font-black tracking-tight text-gray-900 leading-none">每日情报</h1>
                 </div>
                 <div className="flex items-center gap-2">
                     <button className="p-2 text-gray-400 hover:text-gray-900 active:scale-90 transition-transform bg-gray-50 rounded-full">
@@ -237,7 +237,7 @@ export function IntelligenceView() {
                 {/* Modern Tabs */}
                 <div className="px-5 py-4">
                     <div className="bg-gray-100/50 p-1 rounded-2xl flex items-center">
-                        {["For You", "Trending", "Sectors", "Radar"].map(tab => (
+                        {["推荐", "热门", "行业", "雷达"].map(tab => (
                             <button
                                 key={tab}
                                 onClick={() => {
@@ -257,7 +257,7 @@ export function IntelligenceView() {
 
                 {/* Content Area */}
                 <AnimatePresence mode="wait">
-                    {activeTab === "Radar" ? (
+                    {activeTab === "雷达" ? (
                         <motion.div
                             key="radar-tab"
                             initial={{ opacity: 0, x: 20 }}

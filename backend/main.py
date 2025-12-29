@@ -368,47 +368,151 @@ def build_summary_payload(analysis: Dict[str, Any], raw_summary: str) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def _parse_analysis_row(row) -> Optional[Dict[str, Any]]:
+    """
+    解析数据库查询结果行为分析数据字典
+
+    Args:
+        row: 数据库查询结果行（支持dict或tuple格式）
+
+    Returns:
+        解析后的分析数据，如果无有效数据则返回None
+        格式: {
+            'polarity': str,
+            'impacts': List[Dict],
+            'opinion': str,
+            'tags': List[str]
+        }
+    """
+    # 兼容dict和tuple两种row格式
+    if isinstance(row, dict):
+        polarity = row.get("ai_polarity")
+        impacts_str = row.get("ai_impacts")
+        opinion = row.get("ai_opinion", "")
+        tags_str = row.get("ai_tags")
+    else:
+        polarity = row[0] if len(row) > 0 else None
+        impacts_str = row[1] if len(row) > 1 else None
+        opinion = (row[2] if len(row) > 2 else "") or ""
+        tags_str = row[3] if len(row) > 3 else None
+
+    # 验证有效性
+    if not polarity:
+        return None
+
+    # 解析JSON字段
+    try:
+        return {
+            "polarity": polarity,
+            "impacts": json.loads(impacts_str) if impacts_str else [],
+            "opinion": opinion,
+            "tags": json.loads(tags_str) if tags_str else []
+        }
+    except json.JSONDecodeError as e:
+        print(f"⚠️ JSON解析失败: {e}")
+        return None
+
+
 def get_cached_analysis(source_url: str) -> Optional[Dict[str, Any]]:
     """获取缓存的 AI 分析结果"""
     if not source_url:
         return None
-    
+
     try:
         ph = get_placeholder()
         with db_conn() as conn:
             cur = conn.cursor()
             cur.execute(f"""
-                SELECT ai_polarity, ai_impacts, ai_opinion, ai_tags, ai_analyzed_at
+                SELECT ai_polarity, ai_impacts, ai_opinion, ai_tags
                 FROM raw_articles
                 WHERE source_url = {ph} AND ai_analyzed_at IS NOT NULL
             """, (source_url,))
             row = cur.fetchone()
-            
+
             if row:
-                # 支持 dict 和 tuple 两种格式
-                if isinstance(row, dict):
-                    polarity = row.get("ai_polarity")
-                    impacts_str = row.get("ai_impacts")
-                    opinion = row.get("ai_opinion") or ""
-                    tags_str = row.get("ai_tags")
-                else:
-                    polarity = row[0]
-                    impacts_str = row[1]
-                    opinion = row[2] or ""
-                    tags_str = row[3]
-                
-                if polarity:  # ai_polarity 存在说明有缓存
-                    return {
-                        "polarity": polarity,
-                        "impacts": json.loads(impacts_str) if impacts_str else [],
-                        "opinion": opinion,
-                        "tags": json.loads(tags_str) if tags_str else [],
-                        "cached": True
-                    }
+                return _parse_analysis_row(row)
+
     except Exception as e:
         print(f"⚠️ 读取 AI 缓存失败: {e}")
-    
+
     return None
+
+
+def get_cached_analysis_batch(
+    source_urls: List[str],
+    batch_size: int = 100
+) -> Dict[str, Dict[str, Any]]:
+    """
+    批量获取AI分析缓存（优化N+1查询）
+
+    Args:
+        source_urls: 文章URL列表
+        batch_size: 单次查询的最大URL数量，默认100
+
+    Returns:
+        URL到分析数据的映射字典
+        格式: {
+            'url1': {'polarity': 'positive', 'impacts': [...], ...},
+            'url2': {'polarity': 'neutral', 'impacts': [...], ...}
+        }
+
+    Note:
+        - 只返回有缓存的URL，未缓存的不在结果中
+        - 自动分批查询，防止单次IN参数过多
+    """
+    if not source_urls:
+        return {}
+
+    all_results = {}
+
+    # 分批处理，防止单次查询参数过多
+    for i in range(0, len(source_urls), batch_size):
+        batch = source_urls[i:i + batch_size]
+
+        try:
+            ph = get_placeholder()
+            with db_conn() as conn:
+                cur = conn.cursor()
+
+                # 构建IN查询
+                placeholders = ','.join([ph] * len(batch))
+                query = f"""
+                    SELECT source_url, ai_polarity, ai_impacts,
+                           ai_opinion, ai_tags
+                    FROM raw_articles
+                    WHERE source_url IN ({placeholders})
+                      AND ai_analyzed_at IS NOT NULL
+                """
+
+                cur.execute(query, batch)
+
+                # 解析结果
+                for row in cur.fetchall():
+                    # 提取source_url
+                    source_url = row[0] if isinstance(row, tuple) else row['source_url']
+
+                    # 构造分析数据行（跳过第一列source_url）
+                    if isinstance(row, tuple):
+                        analysis_row = row[1:]  # (ai_polarity, ai_impacts, ai_opinion, ai_tags)
+                    else:
+                        # dict格式需要重新构造为包含所需字段的dict
+                        analysis_row = {
+                            'ai_polarity': row.get('ai_polarity'),
+                            'ai_impacts': row.get('ai_impacts'),
+                            'ai_opinion': row.get('ai_opinion'),
+                            'ai_tags': row.get('ai_tags')
+                        }
+
+                    analysis = _parse_analysis_row(analysis_row)
+                    if analysis:
+                        all_results[source_url] = analysis
+
+        except Exception as e:
+            print(f"⚠️ 批量获取缓存失败 (batch {i//batch_size + 1}): {e}")
+            # 继续处理下一批，不中断
+
+    print(f"📦 批量缓存查询: {len(source_urls)}个URL, 命中{len(all_results)}个")
+    return all_results
 
 
 def save_analysis_cache(source_url: str, analysis: Dict[str, Any]) -> None:
@@ -463,12 +567,18 @@ def build_intelligence_cards(
 
     # 限制总量
     pending_tasks = pending_tasks[:limit]
-    
-    # 2. 定义处理单元
+
+    # 2. 批量查询所有缓存（关键优化点 - 消除N+1查询）
+    source_urls = [task[0].get("source_url") for task in pending_tasks
+                   if task[0].get("source_url")]
+    print(f"🔍 准备批量查询: {len(source_urls)}个URL, skip_ai={skip_ai}")
+    cached_analyses = get_cached_analysis_batch(source_urls) if not skip_ai else {}
+
+    # 3. 定义处理单元
     def process_one(task):
         normalized, cat_key = task
         source_url = normalized.get("source_url")
-        
+
         if skip_ai:
             analysis = {
                 "polarity": "neutral",
@@ -477,16 +587,16 @@ def build_intelligence_cards(
                 "opinion": ""
             }
         else:
-            # 1. 先检查缓存
-            cached = get_cached_analysis(source_url)
+            # 从批量查询结果中查找缓存
+            cached = cached_analyses.get(source_url)
             if cached:
                 analysis = cached
                 print(f"📦 使用缓存: {normalized['title'][:30]}...")
             else:
-                # 2. 无缓存则调用 AI (这是最耗时的步骤)
+                # 无缓存则调用 AI (这是最耗时的步骤)
                 print(f"🤖 AI 分析中: {normalized['title'][:30]}...")
                 analysis = analyze_article(normalized["title"], normalized["summary"])
-                # 3. 保存到缓存
+                # 保存到缓存
                 if source_url and analysis.get("polarity"):
                     save_analysis_cache(source_url, analysis)
         

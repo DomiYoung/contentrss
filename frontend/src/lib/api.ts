@@ -210,6 +210,7 @@ export interface RawDataResponse {
     label: string;
     count: number;
     items: Array<Record<string, unknown>>;
+    cached_date?: string;  // 后端返回的数据日期（YYYY-MM-DD）
     date_filter?: string | null;  // 返回的日期筛选条件
 }
 
@@ -236,7 +237,7 @@ export async function fetchRawData(
             if (!response.ok) {
                 throw new Error(`Raw Data API Error: ${response.status}`);
             }
-            const json: ApiResponse<{ category: string; label: string; items: Array<Record<string, unknown>>; date_filter?: string | null }> = await response.json();
+            const json: ApiResponse<{ category: string; label: string; items: Array<Record<string, unknown>>; cached_date?: string; date_filter?: string | null }> = await response.json();
             if (!json.success) {
                 throw new Error(json.error?.message || 'API Error');
             }
@@ -245,6 +246,7 @@ export async function fetchRawData(
                 label: json.data?.label || '',
                 count: json.meta?.count || 0,
                 items: json.data?.items || [],
+                cached_date: json.data?.cached_date,  // ✅ 提取后端返回的数据日期
                 date_filter: json.data?.date_filter
             };
         },

@@ -171,6 +171,10 @@ export function OnboardingCarousel() {
     const { showOnboarding, completeOnboarding } = useOnboarding();
     const [[currentIndex, direction], setPage] = useState([0, 0]);
 
+    // Background gradient opacity based on progress
+    const progress = useMotionValue(currentIndex / (slides.length - 1));
+    const bgOpacity = useTransform(progress, [0, 1], [0.3, 0.6]);
+
     if (!showOnboarding) return null;
 
     const paginate = (newDirection: number) => {
@@ -185,10 +189,6 @@ export function OnboardingCarousel() {
 
     const currentSlide = slides[currentIndex];
     const isLastSlide = currentIndex === slides.length - 1;
-
-    // Background gradient opacity based on progress
-    const progress = useMotionValue(currentIndex / (slides.length - 1));
-    const bgOpacity = useTransform(progress, [0, 1], [0.3, 0.6]);
 
     return (
         <motion.div

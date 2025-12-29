@@ -18,6 +18,7 @@ interface ArticleDetailProps {
 export function ArticleDetail({ id, onBack }: ArticleDetailProps) {
     const [article, setArticle] = useState<ArticleDetailData | null>(null);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
     const [activeOverlay, setActiveOverlay] = useState<"poster" | "ask" | "note" | null>(null);
 
     const x = useMotionValue(0);
@@ -29,7 +30,9 @@ export function ArticleDetail({ id, onBack }: ArticleDetailProps) {
                 setArticle(data);
                 setLoading(false);
             })
-            .catch(() => {
+            .catch((err) => {
+                console.error(`❌ Failed to fetch article ${id}:`, err);
+                setError(err.message || "文章加载失败");
                 setLoading(false);
             });
     }, [id]);
@@ -47,7 +50,25 @@ export function ArticleDetail({ id, onBack }: ArticleDetailProps) {
         );
     }
 
-    if (!article) return <div className="h-full flex flex-col items-center justify-center bg-white text-gray-900">Error loading article</div>;
+    if (!article) {
+        return (
+            <div className="h-full flex flex-col items-center justify-center bg-white text-gray-900 px-6">
+                <div className="text-center max-w-md">
+                    <div className="text-6xl mb-6">📭</div>
+                    <h2 className="text-xl font-bold mb-2">文章不存在</h2>
+                    <p className="text-gray-500 mb-6">
+                        {error || `文章 ID ${id} 不存在或已被删除`}
+                    </p>
+                    <button
+                        onClick={handleBack}
+                        className="px-6 py-3 bg-gray-900 text-white rounded-2xl font-medium hover:bg-gray-800 transition-colors"
+                    >
+                        返回列表
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <motion.div

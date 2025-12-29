@@ -1,14 +1,16 @@
 import { useState, useEffect, useCallback } from "react";
 import { fetchRawData, clearApiCache } from "@/lib/api";
 import { DATA_CATEGORIES, type DataCategoryId } from "@/lib/data-categories";
-import { Search } from "lucide-react";
+import { Search, Newspaper } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { triggerHaptic } from "@/lib/haptic";
 import { PullToRefresh } from "@/components/ui/PullToRefresh";
+import { ArticleDetail } from "@/views/ArticleDetail";
+import { AppleNewsCard } from "@/components/AppleNewsCard";
 
-// 扩展数据类型以包含图片和元数据
+// Apple News 风格数据结构 (简洁、真实数据优先)
 interface ArticleItem {
-    id: string;
+    id: number;  // ✅ 改为number以匹配后端和ArticleDetail
     title: string;
     description: string;
     category: string;
@@ -31,9 +33,10 @@ const getCategoryResultImage = (_categoryId: string, index: number) => {
 };
 
 export function DataView() {
-    const [activeCategory, setActiveCategory] = useState<DataCategoryId | "all">("all");
+    const [activeCategory, setActiveCategory] = useState<DataCategoryId | "all">("legal"); // ✅ 默认法律法规
     const [articles, setArticles] = useState<ArticleItem[]>([]);
     const [loading, setLoading] = useState(true);
+    const [selectedArticleId, setSelectedArticleId] = useState<number | null>(null);
 
     // 加载数据的函数
     const loadArticles = useCallback(async (forceRefresh: boolean = false) => {
@@ -48,64 +51,33 @@ export function DataView() {
                 console.log("🔄 缓存已清除，正在获取最新数据...");
             }
 
-            let rawItems: Array<Record<string, unknown>> = [];
-            if (activeCategory === "all") {
-                const [res1, res2] = await Promise.all([
-                    fetchRawData("ai", forceRefresh),
-                    fetchRawData("digital", forceRefresh)
-                ]);
-                rawItems = [...(res1.items || []), ...(res2.items || [])];
-            } else {
-                const res = await fetchRawData(activeCategory, forceRefresh);
-                rawItems = res.items || [];
-            }
+            // 直接请求当前分类的数据
+            const res = await fetchRawData(activeCategory, forceRefresh);
+            const rawItems = res.items || [];
 
-            // 转换数据格式 (参考 specs/interface-data-mapping/spec.md)
+            // 转换数据格式（后端返回的是扁平结构，直接读取字段）
             const mapped: ArticleItem[] = rawItems.map((item: Record<string, unknown>, idx: number) => {
-                const fields = (item.fields || {}) as Record<string, unknown>;
+                // ✅ 后端返回扁平结构：{ title, summary, ingested_at, source_name, ... }
+                const title = (item.title as string) || "无标题";
+                const description = (item.summary as string) || "暂无摘要";
+                const sourceName = (item.source_name as string) || "未知来源"; // ✅ 提取来源
 
-                // 1. 优先使用直接字段
-                let title = fields["文章标题-moss用"] as string;
-                let description = "";
-
-                // 2. 解析嵌套 JSON 作为备选
-                const infoStr = fields["文章信息"] as string;
-                if (infoStr && typeof infoStr === 'string') {
-                    try {
-                        const info = JSON.parse(infoStr);
-                        title = title || info.文章标题 || info["文章标题"];
-                        description = info.摘要 || info["摘要"] || "";
-                    } catch (e) {
-                        console.warn("JSON parse failed for 文章信息:", e);
-                    }
-                }
-
-                // 3. 最终 fallback
-                title = title || (fields["Title"] as string) || "Untitled Article";
-                description = description || (fields["Summary"] as string) || "No description available.";
-
-                // 4. 格式化日期
+                // 格式化日期（显示实际日期 YYYY-MM-DD）
                 const ingestedAt = item.ingested_at as string;
                 let dateDisplay = "Unknown";
                 if (ingestedAt) {
-                    try {
-                        const date = new Date(ingestedAt);
-                        const now = new Date();
-                        const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
-                        dateDisplay = diffDays === 0 ? "Today" : diffDays === 1 ? "Yesterday" : `${diffDays}d ago`;
-                    } catch {
-                        dateDisplay = ingestedAt.split("T")[0];
-                    }
+                    // 直接提取日期部分（格式：2025-12-29 16:29:23 或 2025-12-29T16:29:23）
+                    dateDisplay = ingestedAt.split(" ")[0].split("T")[0]; // 提取 YYYY-MM-DD
                 }
 
                 return {
-                    id: (item.record_id as string) || `art-${idx}`,
+                    id: (item.id as number) || idx,  // ✅ 使用后端返回的 id 字段
                     title,
                     description,
                     category: activeCategory === "all" ? (idx % 2 === 0 ? "AI" : "Tech") : DATA_CATEGORIES.find(c => c.id === activeCategory)?.label || "General",
                     imageUrl: getCategoryResultImage(activeCategory, idx),
                     date: dateDisplay,
-                    readTime: `${Math.max(2, Math.ceil(description.length / 200))} min read`
+                    readTime: sourceName // ✅ 用 sourceName 替代 readTime
                 };
             });
 
@@ -132,18 +104,32 @@ export function DataView() {
         setActiveCategory(id);
     };
 
+    // 处理文章点击 - 跳转到详情页
+    const handleArticleClick = (articleId: number) => {
+        triggerHaptic("medium");
+        setSelectedArticleId(articleId);
+    };
+
+    // 如果选中了文章,显示详情页
+    if (selectedArticleId !== null) {
+        return <ArticleDetail id={selectedArticleId} onBack={() => setSelectedArticleId(null)} />;
+    }
+
     // const filteredArticles = articles; // Removed unused variable
 
     return (
-        <div className="h-screen flex flex-col bg-white text-gray-900 font-sans selection:bg-blue-100">
-            {/* Fixed Header */}
-            <header className="flex-shrink-0 px-5 py-4 flex items-center justify-between bg-white border-b border-gray-100">
-                <div className="flex flex-col">
-                    <span className="text-[10px] font-black text-blue-600 uppercase tracking-[0.2em] mb-0.5">Intelligence Hub</span>
-                    <h1 className="text-[22px] font-black tracking-tight text-gray-900 leading-none">Articles</h1>
+        <div className="h-screen flex flex-col bg-[#F5F5F7] text-gray-900 selection:bg-rose-100">
+            {/* Fixed Header - Apple News Style */}
+            <header className="flex-shrink-0 px-6 py-5 flex items-center justify-between bg-white border-b border-gray-200">
+                <div className="flex items-center gap-3">
+                    <Newspaper size={24} className="text-rose-600" strokeWidth={2.5} />
+                    <div className="flex flex-col">
+                        <span className="text-[10px] font-semibold text-rose-600 uppercase tracking-widest">Intelligence</span>
+                        <h1 className="text-2xl font-bold tracking-tight text-gray-900 leading-none">Latest Stories</h1>
+                    </div>
                 </div>
-                <button className="p-2 text-gray-400 hover:text-gray-900 active:scale-90 transition-transform bg-gray-50 rounded-full">
-                    <Search size={20} />
+                <button className="p-2.5 text-gray-400 hover:text-gray-900 active:scale-90 transition-all bg-gray-100 rounded-full">
+                    <Search size={20} strokeWidth={2.5} />
                 </button>
             </header>
 
@@ -151,116 +137,78 @@ export function DataView() {
             <PullToRefresh onRefresh={handlePullRefresh} disabled={loading}>
                 <div className="px-5 pt-4 pb-28">
 
-                    {/* Modern Category Chips */}
+                    {/* Apple News Category Pills */}
                     <div className="flex gap-2 overflow-x-auto no-scrollbar mb-6 pb-2">
                         <button
                             onClick={() => handleCategoryChange("all")}
                             className={cn(
-                                "px-5 py-2 rounded-xl text-xs font-black whitespace-nowrap transition-all duration-300",
+                                "px-5 py-2.5 text-sm font-semibold whitespace-nowrap transition-all duration-300 rounded-full",
                                 activeCategory === "all"
-                                    ? "bg-gray-900 text-white briefing-card-shadow"
-                                    : "bg-gray-50 text-gray-400 hover:text-gray-600"
+                                    ? "bg-gray-900 text-white shadow-lg"
+                                    : "bg-white text-gray-600 hover:bg-gray-100 border border-gray-200"
                             )}
                         >
-                            ALL
+                            全部
                         </button>
                         {DATA_CATEGORIES.map(cat => (
                             <button
                                 key={cat.id}
                                 onClick={() => handleCategoryChange(cat.id)}
                                 className={cn(
-                                    "px-5 py-2 rounded-xl text-xs font-black whitespace-nowrap transition-all duration-300",
+                                    "px-5 py-2.5 text-sm font-semibold whitespace-nowrap transition-all duration-300 rounded-full",
                                     activeCategory === cat.id
-                                        ? "bg-gray-900 text-white briefing-card-shadow"
-                                        : "bg-gray-50 text-gray-400 hover:text-gray-600"
+                                        ? "bg-gray-900 text-white shadow-lg"
+                                        : "bg-white text-gray-600 hover:bg-gray-100 border border-gray-200"
                                 )}
                         >
-                            {cat.label.toUpperCase()}
+                            {cat.label}
                         </button>
                     ))}
                 </div>
 
-                {/* Articles List */}
-                <div className="space-y-4">
+                {/* Articles Grid - Apple News Style */}
+                <div className="grid grid-cols-1 gap-6">
                     {loading ? (
-                        // Loading skeleton - matches article card structure
-                        Array.from({ length: 5 }).map((_, i) => (
+                        // Apple News Loading Skeleton
+                        Array.from({ length: 3 }).map((_, i) => (
                             <div
                                 key={i}
-                                className="bg-white rounded-2xl border border-gray-100 overflow-hidden"
+                                className="bg-white rounded-3xl overflow-hidden animate-pulse border border-gray-200"
                                 style={{ animationDelay: `${i * 100}ms` }}
                             >
-                                <div className="flex gap-4 p-4">
-                                    {/* Thumbnail skeleton */}
-                                    <div className="flex-shrink-0 w-24 h-24 rounded-xl skeleton-shimmer" />
-                                    {/* Content skeleton */}
-                                    <div className="flex-1 min-w-0 flex flex-col justify-between py-1">
-                                        <div className="space-y-2">
-                                            {/* Category + date */}
-                                            <div className="flex items-center gap-2">
-                                                <div className="h-3 w-12 rounded skeleton-shimmer" />
-                                                <div className="h-3 w-16 rounded skeleton-shimmer" />
-                                            </div>
-                                            {/* Title */}
-                                            <div className="h-4 w-full rounded skeleton-shimmer" />
-                                            <div className="h-4 w-3/4 rounded skeleton-shimmer" />
-                                            {/* Description */}
-                                            <div className="h-3 w-full rounded skeleton-shimmer opacity-60" />
-                                        </div>
-                                        {/* Read time */}
-                                        <div className="h-3 w-16 rounded skeleton-shimmer opacity-40 mt-2" />
-                                    </div>
+                                <div className="aspect-[16/9] bg-gray-200" />
+                                <div className="p-5 space-y-3">
+                                    <div className="h-6 bg-gray-200 rounded w-3/4" />
+                                    <div className="h-4 bg-gray-100 rounded w-full" />
+                                    <div className="h-4 bg-gray-100 rounded w-5/6" />
                                 </div>
                             </div>
                         ))
                     ) : articles.length > 0 ? (
-                        // Article cards
+                        // Apple News Style Cards
                         articles.map((article) => (
-                            <article
+                            <AppleNewsCard
                                 key={article.id}
-                                className="bg-white rounded-2xl border border-gray-100 overflow-hidden hover:border-gray-200 hover:shadow-sm transition-all duration-200 active:scale-[0.99]"
-                            >
-                                <div className="flex gap-4 p-4">
-                                    {/* Thumbnail */}
-                                    <div className="flex-shrink-0 w-24 h-24 rounded-xl overflow-hidden bg-gray-100">
-                                        <img
-                                            src={article.imageUrl}
-                                            alt=""
-                                            className="w-full h-full object-cover"
-                                            loading="lazy"
-                                        />
-                                    </div>
-                                    {/* Content */}
-                                    <div className="flex-1 min-w-0 flex flex-col justify-between">
-                                        <div>
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">
-                                                    {article.category}
-                                                </span>
-                                                <span className="text-[10px] text-gray-300">•</span>
-                                                <span className="text-[10px] text-gray-400">{article.date}</span>
-                                            </div>
-                                            <h3 className="text-sm font-bold text-gray-900 line-clamp-2 leading-snug mb-1">
-                                                {article.title}
-                                            </h3>
-                                            <p className="text-xs text-gray-500 line-clamp-2 leading-relaxed">
-                                                {article.description}
-                                            </p>
-                                        </div>
-                                        <div className="flex items-center gap-2 mt-2">
-                                            <span className="text-[10px] text-gray-400">{article.readTime}</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </article>
+                                id={article.id}
+                                title={article.title}
+                                description={article.description}
+                                category={article.category}
+                                imageUrl={article.imageUrl}
+                                date={article.date}
+                                readTime={article.readTime}
+                                onClick={() => handleArticleClick(article.id)}
+                            />
                         ))
                     ) : (
-                        // Empty state
-                        <div className="py-20 text-center flex flex-col items-center gap-4">
-                            <div className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center text-gray-200">
-                                <Search size={24} />
+                        // Empty state - Apple News Style
+                        <div className="py-24 text-center flex flex-col items-center gap-5">
+                            <div className="w-16 h-16 bg-gray-100 rounded-3xl flex items-center justify-center text-gray-300">
+                                <Search size={32} strokeWidth={2} />
                             </div>
-                            <p className="text-xs font-black text-gray-300 uppercase tracking-widest">No articles found</p>
+                            <div className="space-y-2">
+                                <p className="text-lg font-bold text-gray-900">暂无内容</p>
+                                <p className="text-sm text-gray-500">调整分类筛选或稍后再试</p>
+                            </div>
                         </div>
                     )}
                 </div>

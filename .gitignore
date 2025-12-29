@@ -39,6 +39,9 @@ Thumbs.db
 *.db
 *.sqlite
 
+# 允许跟踪本地演示数据库（用于跨设备同步）
+!backend/local.db
+
 # Build outputs
 frontend/dist/
 *.log

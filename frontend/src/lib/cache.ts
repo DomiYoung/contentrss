@@ -55,47 +55,83 @@ const openDB = (): Promise<IDBDatabase> => {
 };
 
 /**
- * 从响应数据中提取最新的 ingested_at
- * 支持数组格式和对象格式
+ * 从响应数据中提取最新的 ingested_at 或 cached_date
+ * 支持多种数据格式
  */
 export const extractLatestIngestedAt = (data: unknown): string | null => {
-    // 处理 { items: [...] } 格式
-    if (data && typeof data === 'object' && 'items' in data) {
-        const items = (data as { items: unknown[] }).items;
+    if (!data || typeof data !== 'object') return null;
+
+    const obj = data as Record<string, unknown>;
+
+    console.log('🔍 [DEBUG] extractLatestIngestedAt 输入:', JSON.stringify(obj).slice(0, 300));
+
+    // 1. 优先使用 cached_date（后端明确返回的数据日期）
+    if ('cached_date' in obj && obj.cached_date) {
+        console.log('✅ [DEBUG] 从 cached_date 提取:', obj.cached_date);
+        return String(obj.cached_date);
+    }
+
+    // 2. 尝试从 date_filter 提取
+    if ('date_filter' in obj && obj.date_filter) {
+        console.log('✅ [DEBUG] 从 date_filter 提取:', obj.date_filter);
+        return String(obj.date_filter);
+    }
+
+    // 3. 处理 { items: [...] } 格式，提取第一个 item 的 ingested_at
+    if ('items' in obj) {
+        const items = obj.items as unknown[];
         if (Array.isArray(items) && items.length > 0) {
             const firstItem = items[0] as Record<string, unknown>;
-            return (firstItem?.ingested_at as string) || null;
+            if (firstItem?.ingested_at) {
+                console.log('✅ [DEBUG] 从 items[0].ingested_at 提取:', firstItem.ingested_at);
+                return String(firstItem.ingested_at);
+            }
         }
     }
 
-    // 处理 { cards: [...] } 格式
-    if (data && typeof data === 'object' && 'cards' in data) {
-        const cards = (data as { cards: unknown[] }).cards;
+    // 4. 处理 { cards: [...] } 格式
+    if ('cards' in obj) {
+        const cards = obj.cards as unknown[];
+        console.log('🔍 [DEBUG] 检测到 cards 数组，长度:', Array.isArray(cards) ? cards.length : 'N/A');
         if (Array.isArray(cards) && cards.length > 0) {
             const firstCard = cards[0] as Record<string, unknown>;
-            return (firstCard?.ingested_at as string) || null;
+            console.log('🔍 [DEBUG] cards[0] 内容:', JSON.stringify(firstCard).slice(0, 300));
+            console.log('🔍 [DEBUG] cards[0].ingested_at =', firstCard?.ingested_at);
+            if (firstCard?.ingested_at) {
+                console.log('✅ [DEBUG] 从 cards[0].ingested_at 提取:', firstCard.ingested_at);
+                return String(firstCard.ingested_at);
+            } else {
+                console.warn('⚠️ [DEBUG] cards[0] 不包含有效的 ingested_at，可用字段:', Object.keys(firstCard));
+            }
         }
     }
 
-    // 处理直接数组格式
+    // 5. 处理直接数组格式
     if (Array.isArray(data) && data.length > 0) {
         const firstItem = data[0] as Record<string, unknown>;
-        return (firstItem?.ingested_at as string) || null;
+        if (firstItem?.ingested_at) {
+            console.log('✅ [DEBUG] 从数组[0].ingested_at 提取:', firstItem.ingested_at);
+            return String(firstItem.ingested_at);
+        }
     }
 
+    console.warn('⚠️ [DEBUG] 未找到任何日期字段');
     return null;
 };
 
 /**
  * 检查缓存是否有效
- * 核心逻辑：数据的 ingested_at 必须是今天
+ * 核心逻辑：接受今天和昨天的数据（渐进式降级策略）
  */
 const isCacheValid = (entry: CacheEntry): boolean => {
     const today = getDateString();
+    const yesterday = getDateString(new Date(Date.now() - 24 * 60 * 60 * 1000));
     const dataDate = extractDateFromISO(entry.dataIngestedAt);
 
-    if (dataDate === today) {
-        console.log(`📦 缓存有效: ${entry.key} (数据日期: ${dataDate})`);
+    // 接受今天或昨天的数据
+    if (dataDate === today || dataDate === yesterday) {
+        const freshness = dataDate === today ? '今日数据' : '昨日数据（降级）';
+        console.log(`📦 缓存有效: ${entry.key} (${freshness}: ${dataDate})`);
         return true;
     }
 
@@ -211,7 +247,16 @@ export const clearExpiredCache = async (): Promise<void> => {
 };
 
 /**
- * 带缓存的 API 请求（智能版）
+ * 检查缓存数据是否为今日最新
+ */
+const isCacheFresh = (entry: CacheEntry): boolean => {
+    const today = getDateString();
+    const dataDate = extractDateFromISO(entry.dataIngestedAt);
+    return dataDate === today;
+};
+
+/**
+ * 带缓存的 API 请求（SWR 轻量实现）
  * @param cacheKey 缓存键
  * @param fetcher 实际的 API 请求函数
  * @param forceRefresh 是否强制刷新（跳过缓存）
@@ -221,19 +266,43 @@ export const fetchWithCache = async <T>(
     fetcher: () => Promise<T>,
     forceRefresh: boolean = false
 ): Promise<T> => {
-    // 1. 检查缓存（基于 ingested_at 验证）
-    if (!forceRefresh) {
-        const cached = await getCache<T>(cacheKey);
-        if (cached !== null) {
-            return cached;
-        }
+    // 1. 强制刷新模式：跳过缓存直接请求
+    if (forceRefresh) {
+        const data = await fetcher();
+        await setCache(cacheKey, data);
+        return data;
     }
 
-    // 2. 调用 API
+    // 2. SWR 模式：先返回缓存（如果有效），然后后台重新验证
+    const cached = await getCache<T>(cacheKey);
+
+    if (cached !== null) {
+        // 2.1 有缓存：立即返回
+        // 2.2 后台检查：如果缓存是昨天的，后台静默更新
+        const db = await openDB();
+        const transaction = db.transaction(STORE_NAME, 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.get(cacheKey);
+
+        request.onsuccess = () => {
+            const entry = request.result as CacheEntry<T> | undefined;
+            if (entry && !isCacheFresh(entry)) {
+                // 缓存是昨天的数据，后台静默更新
+                console.log(`🔄 后台更新中: ${cacheKey} (当前缓存为昨日数据)`);
+                fetcher().then(newData => {
+                    setCache(cacheKey, newData);
+                    console.log(`✅ 后台更新完成: ${cacheKey}`);
+                }).catch(err => {
+                    console.warn(`⚠️ 后台更新失败: ${cacheKey}`, err);
+                });
+            }
+        };
+
+        return cached;
+    }
+
+    // 3. 无缓存：正常请求并缓存
     const data = await fetcher();
-
-    // 3. 存入缓存（自动提取 ingested_at）
     await setCache(cacheKey, data);
-
     return data;
 };
