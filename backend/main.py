@@ -10,7 +10,7 @@ import os
 import json
 import requests
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from database import init_db, get_db_connection, get_placeholder, is_postgres
 import hashlib
@@ -35,6 +35,7 @@ DEFAULT_MODEL = os.getenv('DEFAULT_MODEL', 'qwen-max')  # 升级到更强模型
 SPECIAL_API_URL = os.getenv('SPECIAL_API_URL')
 SPECIAL_CHAIN_ID = int(os.getenv('SPECIAL_CHAIN_ID', '1036'))
 ACCESS_TOKEN = os.getenv('ACCESS_TOKEN')
+USE_V2_ANALYSIS = os.getenv('USE_V2_ANALYSIS', 'false').lower() == 'true'  # 机构级分析开关
 
 # 验证配置
 if not OPENAI_API_KEY:
@@ -107,36 +108,47 @@ def parse_datetime(value: Any) -> Optional[datetime]:
     return None
 
 
-def get_raw_articles_by_category() -> Dict[str, List[Dict[str, Any]]]:
-    """统一获取所有分类的原始文章数据（极致优化：缓存命中仅 1 次 RTT）"""
+def get_raw_articles_by_category(target_date: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
+    """统一获取所有分类的原始文章数据（日期感知缓存优化）
+
+    Args:
+        target_date: 目标日期 YYYY-MM-DD，None 表示今天
+
+    Returns:
+        Dict[category_key, List[article]]
+    """
     category_keys = list(get_category_mapping().keys())
-    
-    # 1. 单次查询获取数据 + 状态
-    db_data, last_sync_map = fetch_all_raw_articles_with_metadata(category_keys)
-    
-    # 2. 检查同步需求 (每天仅需同步一次)
-    now = datetime.now()
-    needs_sync_keys = []
-    
-    for key in category_keys:
-        last_sync = last_sync_map.get(key)
-        # 如果没数据，或者上次同步不是今天
-        if not last_sync or last_sync.date() < now.date():
-            needs_sync_keys.append(key)
-    
-    if needs_sync_keys:
-        print(f"🔄 需要同步 ({len(needs_sync_keys)}个分类): {needs_sync_keys}")
-        try:
-            response = fetch_special_data()
-            sync_data = _coerce_special_payload(parse_special_response(response))
-            for key in needs_sync_keys:
-                items = sync_data.get(key) or []
-                if items:
-                    persist_raw_items(key, items)
-            # 只有同步发生时才进行第二次查询
-            db_data, _ = fetch_all_raw_articles_with_metadata(category_keys)
-        except Exception as e:
-            print(f"⚠️ 同步失败: {e}")
+
+    # 1. 日期感知缓存键
+    cache_date = target_date or datetime.now().strftime('%Y-%m-%d')
+
+    # 2. 单次查询获取数据 + 状态（带日期过滤）
+    db_data, last_sync_map = fetch_all_raw_articles_with_metadata(category_keys, target_date=cache_date)
+
+    # 3. 检查同步需求 (仅针对今天的数据)
+    if not target_date:  # 只有查询今天数据时才触发同步
+        now = datetime.now()
+        needs_sync_keys = []
+
+        for key in category_keys:
+            last_sync = last_sync_map.get(key)
+            # 如果没数据，或者上次同步不是今天
+            if not last_sync or last_sync.date() < now.date():
+                needs_sync_keys.append(key)
+
+        if needs_sync_keys:
+            print(f"🔄 需要同步 ({len(needs_sync_keys)}个分类): {needs_sync_keys}")
+            try:
+                response = fetch_special_data()
+                sync_data = _coerce_special_payload(parse_special_response(response))
+                for key in needs_sync_keys:
+                    items = sync_data.get(key) or []
+                    if items:
+                        persist_raw_items(key, items)
+                # 只有同步发生时才进行第二次查询
+                db_data, _ = fetch_all_raw_articles_with_metadata(category_keys, target_date=cache_date)
+            except Exception as e:
+                print(f"⚠️ 同步失败: {e}")
 
     return db_data
 
@@ -161,59 +173,96 @@ def _row_value(row: Any, key: str) -> Any:
         return None
 
 
-def fetch_all_raw_articles_with_metadata(category_keys: List[str], limit_per_cat: int = 40) -> tuple[Dict[str, List[Dict[str, Any]]], Dict[str, datetime]]:
-    """批量从数据库读取文章和最新的同步时间"""
+def fetch_all_raw_articles_with_metadata(
+    category_keys: List[str],
+    limit_per_cat: int = 40,
+    target_date: Optional[str] = None
+) -> tuple[Dict[str, List[Dict[str, Any]]], Dict[str, datetime]]:
+    """批量从数据库读取文章和最新的同步时间
+
+    Args:
+        category_keys: 分类键列表
+        limit_per_cat: 每个分类返回的最大文章数
+        target_date: 目标日期 YYYY-MM-DD，None 表示不过滤日期
+
+    Returns:
+        (db_data, last_sync_map)
+    """
     try:
         if not category_keys:
             return {}, {}
-        
+
         ph = get_placeholder()  # SQLite: ? / PostgreSQL: %s
         placeholders = ", ".join([ph] * len(category_keys))
-        
+
+        # 构建日期过滤条件
+        date_filter = f"AND DATE(ingested_at) = {ph}" if target_date else ""
+        params = list(category_keys)
+        if target_date:
+            params.append(target_date)
+        params.append(limit_per_cat)
+
         # SQLite 和 PostgreSQL 都支持 WITH 和 ROW_NUMBER() 窗口函数
         query = f"""
             WITH ranked_articles AS (
-                SELECT 
-                    category_key, 
+                SELECT
+                    id,
+                    category_key,
+                    source_url,
+                    source_name,
+                    title,
+                    summary,
+                    content,
                     raw_payload,
                     ingested_at,
                     ROW_NUMBER() OVER(PARTITION BY category_key ORDER BY ingested_at DESC) as rank
                 FROM raw_articles
                 WHERE category_key IN ({placeholders})
+                  {date_filter}
             )
-            SELECT category_key, raw_payload, ingested_at, rank
+            SELECT id, category_key, source_url, source_name, title, summary, content, raw_payload, ingested_at, rank
             FROM ranked_articles
             WHERE rank <= {ph}
         """
         
         db_data: Dict[str, List[Dict[str, Any]]] = {key: [] for key in category_keys}
         last_sync_map: Dict[str, datetime] = {}
-        
+
         with db_conn() as conn:
             cur = conn.cursor()
-            cur.execute(query, (*category_keys, limit_per_cat))
+            cur.execute(query, tuple(params))
             rows = cur.fetchall()
             
         for row in rows:
             cat = row["category_key"]
-            payload = row["raw_payload"]
             ingested_at = row["ingested_at"]
             rank = row["rank"]
-            
+
             # 记录该分类最新的同步时间（rank=1 的即为最新）
             if rank == 1:
                 last_sync_map[cat] = parse_datetime(ingested_at)
-            
+
+            # 优先使用数据库字段，避免嵌套JSON解析
+            payload = row["raw_payload"]
             if isinstance(payload, str):
                 try:
                     payload = json.loads(payload)
                 except:
-                    payload = {"raw_payload": payload}
-            
-            if isinstance(payload, dict):
-                # 将 ingested_at 添加到返回数据中
-                payload["ingested_at"] = str(ingested_at) if ingested_at else None
-                db_data[cat].append(payload)
+                    payload = {}
+
+            # 构建完整的文章对象（直接从数据库字段，不依赖payload）
+            article = {
+                "id": row["id"],                        # ✅ 文章ID（主键）
+                "source_url": row["source_url"],        # ✅ 关键字段
+                "source_name": row["source_name"],
+                "title": row["title"],
+                "summary": row["summary"],
+                "content": row["content"],
+                "ingested_at": str(ingested_at) if ingested_at else None,
+                "raw_payload": payload  # 保留用于其他字段（如fields）
+            }
+
+            db_data[cat].append(article)
                 
         return db_data, last_sync_map
     except Exception as e:
@@ -306,7 +355,30 @@ def safe_json(value: Any) -> Dict[str, Any]:
 def normalize_article(article: Dict[str, Any], category_key: str) -> Optional[Dict[str, Any]]:
     if not isinstance(article, dict):
         return None
-        
+
+    # ✅ 优先使用数据库字段（来自 fetch_all_raw_articles_with_metadata）
+    article_id = article.get("id")
+    title = article.get("title")
+    summary = article.get("summary")
+    content = article.get("content")
+    source_name = article.get("source_name")
+    source_url = article.get("source_url")
+    ingested_at = article.get("ingested_at")
+
+    # 如果数据库字段存在，直接使用
+    if article_id and title:
+        return {
+            "id": article_id,
+            "title": title,
+            "summary": summary or "",
+            "content": content or summary or "",
+            "source_name": source_name or "",
+            "source_url": source_url,
+            "category_key": category_key,
+            "ingested_at": ingested_at,
+        }
+
+    # ⚠️ Fallback: 解析 raw_payload（用于旧数据兼容）
     fields = article.get("fields", article)
     raw_info = fields.get("文章信息") or fields.get("article_info") or fields.get("info")
     info = safe_json(raw_info) if raw_info else {}
@@ -550,6 +622,7 @@ def build_intelligence_cards(
     skip_ai: bool = False,
     category_key: Optional[str] = None
 ) -> List[Dict[str, Any]]:
+    print(f"🎯 build_intelligence_cards 被调用: limit={limit}, skip_ai={skip_ai}, category={category_key}")
     if category_key and category_key != "all":
         data = {category_key: get_articles_for_category(category_key)}
     else:
@@ -595,7 +668,7 @@ def build_intelligence_cards(
             else:
                 # 无缓存则调用 AI (这是最耗时的步骤)
                 print(f"🤖 AI 分析中: {normalized['title'][:30]}...")
-                analysis = analyze_article(normalized["title"], normalized["summary"])
+                analysis = analyze_article(normalized["title"], normalized["summary"], use_v2=USE_V2_ANALYSIS)
                 # 保存到缓存
                 if source_url and analysis.get("polarity"):
                     save_analysis_cache(source_url, analysis)
@@ -635,17 +708,36 @@ def build_intelligence_cards(
     return cards
 
 def find_article_by_id(article_id: int) -> Optional[Dict[str, Any]]:
-    data = get_raw_articles_by_category()
-    for category_key, articles in data.items():
-        if not isinstance(articles, list):
-            continue
-        for article in articles:
-            normalized = normalize_article(article, category_key)
-            if not normalized:
-                continue
-            if normalized["id"] is not None and str(normalized["id"]) == str(article_id):
-                return normalized
-    return None
+    """通过ID查找文章（查询数据库，不限制日期）"""
+    try:
+        ph = get_placeholder()
+        query = f"""
+            SELECT id, category_key, source_url, source_name, title, summary, content, ingested_at
+            FROM raw_articles
+            WHERE id = {ph}
+            LIMIT 1
+        """
+        with db_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(query, (article_id,))
+            row = cur.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "summary": row["summary"],
+            "content": row["content"],
+            "source_name": row["source_name"],
+            "source_url": row["source_url"],
+            "category_key": row["category_key"],
+            "ingested_at": str(row["ingested_at"]) if row["ingested_at"] else None,
+        }
+    except Exception as e:
+        print(f"⚠️ 查找文章失败 (ID={article_id}): {e}")
+        return None
 
 
 def build_daily_briefing(cards: List[Dict[str, Any]], persona: str = "SPECIALIST") -> Dict[str, Any]:
@@ -828,15 +920,28 @@ def parse_special_response(response: dict) -> dict:
     return {}
 
 
-def analyze_article(title: str, summary: str) -> dict:
+def analyze_article(title: str, summary: str, use_v2: bool = False) -> dict:
     """
     使用外部 Analyst Prompt 模板深度分析文章
-    定位：从“摘要员”进化为“分析师”
+
+    Args:
+        title: 文章标题
+        summary: 文章摘要
+        use_v2: 是否使用V2机构级分析（默认False保持兼容性）
+
+    Returns:
+        V1: 基础分析（CIO级别）
+        V2: 机构级分析（PE/对冲基金级别）- Alpha识别、催化剂、风险矩阵
     """
-    # 尝试加载外部提示词模板
-    prompt_path = os.path.join(os.path.dirname(__file__), 'prompts', 'analyst_v1.md')
-    system_prompt = "You are a Senior Industry Analyst." # 兜底
-    
+    # 选择prompt版本
+    if use_v2:
+        prompt_file = 'analyst_v2_institutional.md'
+    else:
+        prompt_file = 'analyst_v1.md'
+
+    prompt_path = os.path.join(os.path.dirname(__file__), 'prompts', prompt_file)
+    system_prompt = "You are a Senior Industry Analyst."  # 兜底
+
     if os.path.exists(prompt_path):
         try:
             with open(prompt_path, 'r', encoding='utf-8') as f:
@@ -853,25 +958,26 @@ def analyze_article(title: str, summary: str) -> dict:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_input}
             ],
-            temperature=0.2, # 降低随机性，提高逻辑严谨性
-            response_format={ "type": "json_object" } if "gpt-4o" in DEFAULT_MODEL or "qwen" in DEFAULT_MODEL else None
+            temperature=0.2,  # 降低随机性，提高逻辑严谨性
+            response_format={"type": "json_object"} if "gpt-4o" in DEFAULT_MODEL or "qwen" in DEFAULT_MODEL else None
         )
-        
+
         result = response.choices[0].message.content.strip()
         # 清理 markdown 代码块
         if result.startswith('```'):
             result = result.split('\n', 1)[1].rsplit('```', 1)[0]
-        
+
         parsed = json.loads(result)
-        
+
         # 兼容性处理：优先使用 opinion，若不存在则查找旧字段
         if 'actionable_insight' in parsed:
             parsed['opinion'] = parsed.pop('actionable_insight')
-            
+
         return parsed
     except Exception as e:
         print(f"⚠️ AI 分析失败: {e}")
-        return {
+        # V2失败时返回更完整的fallback结构
+        fallback = {
             "polarity": "neutral",
             "title": title[:15],
             "fact": summary[:40],
@@ -880,6 +986,16 @@ def analyze_article(title: str, summary: str) -> dict:
             "tags": [],
             "confidence": "low"
         }
+
+        if use_v2:
+            fallback.update({
+                "alpha_thesis": {"pattern": "未知", "logic": "分析失败", "confidence": "low"},
+                "catalysts": [],
+                "risk_reward": {"upside": 0, "downside_protection": 0, "catalyst_certainty": 0, "overall_rating": 0},
+                "moat_assessment": {"type": "unknown", "durability": 0, "competitive_position": "未评估"}
+            })
+
+        return fallback
 
 
 # ============ API 路由 ============
@@ -941,57 +1057,144 @@ def get_raw_data():
         date: 可选，格式 YYYY-MM-DD，筛选指定日期的数据
 
     Returns:
-        - 不传 date: 返回数据库中该分类的最新数据（最多40条）
-        - 传 date: 返回指定日期入库的数据
+        - 不传 date: 返回今天的最新数据（最多40条），如今天无数据则降级到昨天
+        - 传 date: 返回指定日期的数据
     """
     category = request.args.get('category', 'legal')
     date_str = request.args.get('date')  # 可选：YYYY-MM-DD
 
-    items = get_articles_for_category(category)
+    # 1. 尝试获取目标日期的数据
+    target_date = date_str or datetime.now().strftime('%Y-%m-%d')
+    all_data = get_raw_articles_by_category(target_date=target_date)
+    items = all_data.get(category, [])
+    effective_date = target_date
 
-    # 如果指定了日期，按 ingested_at 筛选
-    if date_str:
-        try:
-            target_date = date_str  # 直接用字符串比较 YYYY-MM-DD 前缀
-            items = [
-                item for item in items
-                if item.get('ingested_at', '').startswith(target_date)
-            ]
-        except Exception as e:
-            return error(
-                code="INVALID_DATE",
-                message=f"日期格式错误: {date_str}，请使用 YYYY-MM-DD",
-                status_code=400
-            )
+    # 2. 如果是查询今天且无数据，降级到昨天（SWR 渐进式降级）
+    if not date_str and len(items) == 0:
+        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        print(f"🔄 今天({target_date})无数据，降级到昨天({yesterday})")
+        all_data_yesterday = get_raw_articles_by_category(target_date=yesterday)
+        items_yesterday = all_data_yesterday.get(category, [])
+
+        if len(items_yesterday) > 0:
+            items = items_yesterday
+            effective_date = yesterday
+            print(f"✅ 降级成功: 返回 {yesterday} 的 {len(items)} 条数据")
 
     return success(
         data={
             "category": category,
             "label": get_category_label(category),
             "items": items,
-            "date_filter": date_str  # 返回筛选条件，便于前端确认
+            "cached_date": effective_date  # ✅ 返回实际数据的日期（可能是昨天）
         },
         meta={
             "count": len(items),
-            "filtered_by_date": date_str is not None
+            "filtered_by_date": date_str is not None,
+            "data_date": effective_date,  # ✅ 数据的真实日期
+            "degraded": effective_date != target_date  # ✅ 是否降级
         }
     )
 
 
 @app.route('/api/intelligence', methods=['GET'])
 def get_intelligence():
-    """获取 AI 分析后的情报卡片（首页用）"""
+    """获取 AI 分析后的情报卡片（首页用）
+    
+    策略：
+    - 优先返回今天的数据
+    - 如果今天无数据，自动降级到昨天（SWR 渐进式降级）
+    - 返回 cached_date 字段，前端缓存系统据此判断数据新鲜度
+    """
     limit = int(request.args.get('limit', 20))
-    # 生产环境可通过 DEFAULT_SKIP_AI=true 跳过 AI 分析（避免内网 API 超时）
     default_skip = os.getenv('DEFAULT_SKIP_AI', 'false').lower() == 'true'
     skip_ai = request.args.get('skip_ai', str(default_skip)).lower() == 'true'
     category = request.args.get('category')
 
+    # 1. 尝试获取今天的数据
     cards = build_intelligence_cards(limit=limit, skip_ai=skip_ai, category_key=category)
+    today = datetime.now().strftime('%Y-%m-%d')
+    effective_date = today
+    
+    # 2. 如果今天无数据，降级到昨天
+    if len(cards) == 0:
+        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        print(f"🔄 今天({today})无数据，尝试降级到昨天({yesterday})")
+        
+        # 临时修改 get_raw_articles_by_category 的目标日期
+        # 注意：这里需要修改 build_intelligence_cards 支持日期参数
+        # 目前先用简单方案：直接查询昨天的数据
+        from database import db_conn, get_placeholder
+        
+        try:
+            ph = get_placeholder()
+            with db_conn() as conn:
+                cur = conn.cursor()
+                cur.execute(f"""
+                    SELECT id, category_key, source_url, source_name, title, summary, content, ingested_at
+                    FROM raw_articles
+                    WHERE DATE(ingested_at) = {ph}
+                    ORDER BY ingested_at DESC
+                    LIMIT {ph}
+                """, (yesterday, limit))
+                
+                rows = cur.fetchall()
+                if rows:
+                    effective_date = yesterday
+                    print(f"✅ 降级成功: 找到 {len(rows)} 条昨天的数据")
+                    
+                    # ✨ 保持 AI 分析质量 - 尊重 skip_ai 参数
+                    cards = []
+                    for row in rows:
+                        article = {
+                            "id": row[0] if isinstance(row, (list, tuple)) else row["id"],
+                            "category_key": row[1] if isinstance(row, (list, tuple)) else row["category_key"],
+                            "title": row[4] if isinstance(row, (list, tuple)) else row["title"],
+                            "summary": row[5] if isinstance(row, (list, tuple)) else row["summary"],
+                            "source_name": row[3] if isinstance(row, (list, tuple)) else row["source_name"],
+                            "source_url": row[2] if isinstance(row, (list, tuple)) else row["source_url"],
+                            "ingested_at": str(row[7]) if isinstance(row, (list, tuple)) else str(row["ingested_at"])
+                        }
 
+                        # 根据 skip_ai 参数决定是否调用 AI
+                        if skip_ai:
+                            analysis = {
+                                "polarity": "neutral",
+                                "fact": article["summary"],
+                                "impacts": [],
+                                "opinion": "",
+                                "tags": []
+                            }
+                        else:
+                            # 🤖 调用 AI 分析 (保持情报质量)
+                            print(f"🤖 降级模式 AI 分析: {article['title'][:30]}...")
+                            analysis = analyze_article(article["title"], article["summary"], use_v2=USE_V2_ANALYSIS)
+
+                        cards.append({
+                            "id": article["id"],
+                            "title": article["title"],
+                            "polarity": analysis.get("polarity", "neutral"),
+                            "fact": analysis.get("fact") or article["summary"],
+                            "impacts": analysis.get("impacts", []),
+                            "opinion": analysis.get("opinion", ""),
+                            "tags": analysis.get("tags", []),
+                            "source_name": article["source_name"],
+                            "source_url": article["source_url"],
+                            "ingested_at": article["ingested_at"]
+                        })
+        except Exception as e:
+            print(f"⚠️ 降级查询失败: {e}")
+    
     return success(
-        data={"cards": cards},
-        meta={"count": len(cards)}
+        data={
+            "cards": cards,
+            "cached_date": effective_date  # ✅ 返回数据的真实日期
+        },
+        meta={
+            "count": len(cards),
+            "data_date": effective_date,
+            "degraded": effective_date != today
+        }
     )
 
 
@@ -1011,7 +1214,12 @@ def get_article_detail(article_id: int):
     skip_ai = request.args.get('skip_ai', 'false').lower() == 'true'
     article = find_article_by_id(article_id)
     if not article:
-        return jsonify({"error": "Article not found"}), 404
+        print(f"❌ Article {article_id} not found in database")
+        return jsonify({
+            "error": "Article not found",
+            "message": f"文章 ID {article_id} 不存在或已被删除",
+            "suggestion": "请返回列表页查看最新文章"
+        }), 404
 
     if skip_ai:
         analysis = {
@@ -1021,7 +1229,7 @@ def get_article_detail(article_id: int):
             "opinion": ""
         }
     else:
-        analysis = analyze_article(article["title"], article["summary"])
+        analysis = analyze_article(article["title"], article["summary"], use_v2=USE_V2_ANALYSIS)
 
     tags = analysis.get("tags") or []
     category_label = get_category_label(article["category_key"])
