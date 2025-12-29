@@ -18,7 +18,11 @@ export const setApiToken = (token: string) => {
 export const getApiToken = () => _apiToken;
 
 // 后端 API 基础地址
-const BACKEND_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+// - 开发环境: 使用空字符串，请求 /api/* 走 Vite 代理 (vite.config.ts)
+// - 生产环境: 直连 Railway 后端
+const BACKEND_BASE_URL = import.meta.env.DEV
+  ? ''
+  : 'https://zooming-truth-production-7145.up.railway.app';
 
 // 后端情报 API 响应类型
 export interface IntelligenceCard {

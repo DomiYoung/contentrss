@@ -51,7 +51,8 @@ ai_client = OpenAI(
 app = Flask(__name__)
 
 # 生产环境 CORS 配置
-PROD_ORIGINS = os.getenv('ALLOWED_ORIGINS', 'http://localhost:16889,http://localhost:5173').split(',')
+# 注意：strip() 处理环境变量中可能的空格/换行
+PROD_ORIGINS = [origin.strip() for origin in os.getenv('ALLOWED_ORIGINS', 'http://localhost:16889,http://localhost:5173').split(',')]
 CORS(app, origins=PROD_ORIGINS, supports_credentials=True)
 
 # 统一响应工具
@@ -118,18 +119,18 @@ def _coerce_special_payload(data: Any) -> Dict[str, List[Dict[str, Any]]]:
 
 
 def parse_datetime(value: Any) -> Optional[datetime]:
-    """解析日期时间，兼容 datetime 对象和字符串"""
+    """解析日期时间，兼容 datetime 对象和各种字符串格式"""
     if value is None:
         return None
     if isinstance(value, datetime):
         return value
     if isinstance(value, str):
+        # 移除可能的微秒或时区后缀以便统一解析
+        clean_val = value.split('.')[0].replace('Z', '').replace('T', ' ')
         try:
-            # SQLite 默认格式: '2025-12-26 15:30:00'
-            return datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
+            return datetime.strptime(clean_val, '%Y-%m-%d %H:%M:%S')
         except ValueError:
             try:
-                # 备用格式
                 return datetime.fromisoformat(value)
             except:
                 return None
@@ -333,8 +334,12 @@ def safe_json(value: Any) -> Dict[str, Any]:
 
 
 def normalize_article(article: Dict[str, Any], category_key: str) -> Optional[Dict[str, Any]]:
-    fields = article.get("fields", article) if isinstance(article, dict) else {}
-    info = safe_json(fields.get("文章信息") or fields.get("article_info") or fields.get("info"))
+    if not isinstance(article, dict):
+        return None
+        
+    fields = article.get("fields", article)
+    raw_info = fields.get("文章信息") or fields.get("article_info") or fields.get("info")
+    info = safe_json(raw_info) if raw_info else {}
 
     title = info.get("文章标题") or fields.get("文章标题-moss用") or fields.get("title") or ""
     summary = info.get("摘要") or fields.get("摘要") or fields.get("summary") or ""
