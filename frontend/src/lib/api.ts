@@ -21,8 +21,8 @@ export const getApiToken = () => _apiToken;
 // - 开发环境: 使用空字符串，请求 /api/* 走 Vite 代理 (vite.config.ts)
 // - 生产环境: 直连 Railway 后端
 const BACKEND_BASE_URL = import.meta.env.DEV
-  ? ''
-  : 'https://zooming-truth-production-7145.up.railway.app';
+    ? ''
+    : 'https://zooming-truth-production-7145.up.railway.app';
 
 // 后端情报 API 响应类型
 export interface IntelligenceCard {
@@ -175,8 +175,34 @@ export async function toggleSubscription(entityId: string): Promise<Subscription
     });
 }
 
-export async function fetchDailyBriefing(): Promise<DailyBriefingData> {
-    return request(`${API_BASE}/briefing/daily`);
+export async function fetchDailyBriefing(persona?: string, forceRefresh: boolean = false): Promise<DailyBriefingData> {
+    const today = new Date().toISOString().split('T')[0];
+    const cacheKey = `daily-briefing-${persona || 'default'}-${today}`;
+    const url = persona ? `${API_BASE}/briefing/daily?persona=${persona}` : `${API_BASE}/briefing/daily`;
+
+    return fetchWithCache<DailyBriefingData>(
+        cacheKey,
+        () => request(url),
+        forceRefresh
+    );
+}
+
+export interface EntityRadarData {
+    name: string;
+    dimensions: Record<'sentiment' | 'volume' | 'momentum' | 'volatility' | 'scope', number>;
+}
+
+export async function fetchEntityRadar(): Promise<EntityRadarData[]> {
+    const url = `${API_BASE}/entities/radar`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Entity Radar API Error: ${response.status}`);
+    }
+    const json: ApiResponse<{ entities: EntityRadarData[] }> = await response.json();
+    if (!json.success) {
+        throw new Error(json.error?.message || 'API Error');
+    }
+    return json.data?.entities || [];
 }
 
 export interface RawDataResponse {
@@ -184,20 +210,33 @@ export interface RawDataResponse {
     label: string;
     count: number;
     items: Array<Record<string, unknown>>;
+    date_filter?: string | null;  // 返回的日期筛选条件
 }
 
-export async function fetchRawData(category: string, forceRefresh: boolean = false): Promise<RawDataResponse> {
+export async function fetchRawData(
+    category: string,
+    forceRefresh: boolean = false,
+    date?: string  // 可选：YYYY-MM-DD 格式
+): Promise<RawDataResponse> {
     const safeCategory = encodeURIComponent(category);
-    const cacheKey = `raw-data-${category}`;
+    // 缓存 key 包含日期（如果有）
+    const cacheKey = date
+        ? `raw-data-${category}-${date}`
+        : `raw-data-${category}`;
 
     return fetchWithCache<RawDataResponse>(
         cacheKey,
         async () => {
-            const response = await fetch(`${API_BASE}/raw-data?category=${safeCategory}`);
+            let url = `${API_BASE}/raw-data?category=${safeCategory}`;
+            if (date) {
+                url += `&date=${encodeURIComponent(date)}`;
+            }
+
+            const response = await fetch(url);
             if (!response.ok) {
                 throw new Error(`Raw Data API Error: ${response.status}`);
             }
-            const json: ApiResponse<{ category: string; label: string; items: Array<Record<string, unknown>> }> = await response.json();
+            const json: ApiResponse<{ category: string; label: string; items: Array<Record<string, unknown>>; date_filter?: string | null }> = await response.json();
             if (!json.success) {
                 throw new Error(json.error?.message || 'API Error');
             }
@@ -205,7 +244,8 @@ export async function fetchRawData(category: string, forceRefresh: boolean = fal
                 category: json.data?.category || category,
                 label: json.data?.label || '',
                 count: json.meta?.count || 0,
-                items: json.data?.items || []
+                items: json.data?.items || [],
+                date_filter: json.data?.date_filter
             };
         },
         forceRefresh
