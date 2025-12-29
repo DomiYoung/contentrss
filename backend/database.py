@@ -13,28 +13,64 @@ USE_POSTGRES = DB_URL.startswith('postgres://') or DB_URL.startswith('postgresql
 SQLITE_DB_PATH = os.path.join(os.path.dirname(__file__), 'local.db')
 
 if USE_POSTGRES:
-    print("📦 Database: PostgreSQL (Supabase)")
+    print("📦 Database: PostgreSQL (Railway)")
     import psycopg2
     from psycopg2.extras import RealDictCursor
 else:
     print(f"📦 Database: SQLite ({SQLITE_DB_PATH})")
 
 
+from contextlib import contextmanager
+import os
+
 def is_postgres():
     """返回当前是否使用 PostgreSQL"""
     return USE_POSTGRES
 
+# --- 数据库连接池管理 ---
+_db_pool = None
+
+def get_pool():
+    global _db_pool
+    if USE_POSTGRES:
+        if _db_pool is None:
+            import psycopg2.pool
+            print("💡 初始化 PostgreSQL 连接池...")
+            # Railway PostgreSQL 需要 SSL 连接
+            _db_pool = psycopg2.pool.ThreadedConnectionPool(1, 10, DB_URL, sslmode='require')
+        return _db_pool
+    return None
+
+@contextmanager
+def db_conn():
+    """统一的数据库连接上下文管理器"""
+    if USE_POSTGRES:
+        pool = get_pool()
+        from psycopg2.extras import RealDictCursor
+        conn = pool.getconn()
+        conn.cursor_factory = RealDictCursor
+        try:
+            yield conn
+        finally:
+            pool.putconn(conn)
+    else:
+        # SQLite 模式：每次请求新建连接
+        conn = get_db_connection()
+        try:
+            yield conn
+        finally:
+            conn.close()
 
 def get_db_connection():
-    """获取数据库连接"""
+    """获取基础数据库连接 (备用)"""
     if USE_POSTGRES:
-        # Supabase 需要 SSL 连接
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
         return psycopg2.connect(DB_URL, cursor_factory=RealDictCursor, sslmode='require')
     else:
         conn = sqlite3.connect(SQLITE_DB_PATH)
         conn.row_factory = sqlite3.Row
         return conn
-
 
 def get_placeholder():
     """返回 SQL 占位符"""

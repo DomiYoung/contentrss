@@ -11,6 +11,7 @@ import json
 import requests
 from dotenv import load_dotenv
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from database import init_db, get_db_connection, get_placeholder, is_postgres
 import hashlib
 from typing import Any, Dict, List, Optional
@@ -72,38 +73,7 @@ def get_category_label(category_key: str) -> str:
 
 
 # ========== 数据库连接管理 (SQLite / PostgreSQL 双模式) ==========
-from contextlib import contextmanager
-
-DB_URL = os.getenv('DATABASE_URL')
-_db_pool = None
-
-def get_pool():
-    global _db_pool
-    if is_postgres():
-        if _db_pool is None:
-            print("💡 初始化 PostgreSQL 连接池...")
-            _db_pool = ThreadedConnectionPool(1, 10, DB_URL, sslmode='require')
-        return _db_pool
-    return None  # SQLite 不使用连接池
-
-@contextmanager
-def db_conn():
-    if is_postgres():
-        pool = get_pool()
-        conn = pool.getconn()
-        conn.cursor_factory = RealDictCursor
-        try:
-            yield conn
-        finally:
-            pool.putconn(conn)
-    else:
-        # SQLite 模式：每次请求新建连接
-        conn = get_db_connection()
-        try:
-            yield conn
-        finally:
-            conn.close()
-
+from database import db_conn, is_postgres
 # ================================
 
 
@@ -360,6 +330,9 @@ def normalize_article(article: Dict[str, Any], category_key: str) -> Optional[Di
         id_source = f"{title}|{source_url or ''}"
         article_id = int(hashlib.md5(id_source.encode("utf-8")).hexdigest()[:8], 16)
 
+    # 提取 ingested_at（来自数据库查询结果）
+    ingested_at = fields.get("ingested_at") or article.get("ingested_at")
+
     return {
         "id": article_id,
         "title": title,
@@ -368,6 +341,7 @@ def normalize_article(article: Dict[str, Any], category_key: str) -> Optional[Di
         "source_name": source_name,
         "source_url": source_url,
         "category_key": category_key,
+        "ingested_at": ingested_at,
     }
 
 
@@ -476,65 +450,79 @@ def build_intelligence_cards(
         data = {category_key: get_articles_for_category(category_key)}
     else:
         data = get_raw_articles_by_category()
-    cards: List[Dict[str, Any]] = []
-    index = 0
-
-    for category_key, articles in data.items():
+    
+    # 1. 收集待处理的文章列表
+    pending_tasks = []
+    for cat_key, articles in data.items():
         if not isinstance(articles, list):
             continue
-
         for article in articles[:3]:
-            normalized = normalize_article(article, category_key)
-            if not normalized:
-                continue
+            normalized = normalize_article(article, cat_key)
+            if normalized:
+                pending_tasks.append((normalized, cat_key))
 
-            index += 1
-            article_id = normalized["id"] or index
-            source_url = normalized.get("source_url")
-
-            if skip_ai:
-                analysis = {
-                    "polarity": "neutral",
-                    "impacts": [],
-                    "tags": [],
-                    "opinion": ""
-                }
+    # 限制总量
+    pending_tasks = pending_tasks[:limit]
+    
+    # 2. 定义处理单元
+    def process_one(task):
+        normalized, cat_key = task
+        source_url = normalized.get("source_url")
+        
+        if skip_ai:
+            analysis = {
+                "polarity": "neutral",
+                "impacts": [],
+                "tags": [],
+                "opinion": ""
+            }
+        else:
+            # 1. 先检查缓存
+            cached = get_cached_analysis(source_url)
+            if cached:
+                analysis = cached
+                print(f"📦 使用缓存: {normalized['title'][:30]}...")
             else:
-                # 1. 先检查缓存
-                cached = get_cached_analysis(source_url)
-                if cached:
-                    analysis = cached
-                    print(f"📦 使用缓存: {normalized['title'][:30]}...")
-                else:
-                    # 2. 无缓存则调用 AI
-                    analysis = analyze_article(normalized["title"], normalized["summary"])
-                    # 3. 保存到缓存
-                    if source_url and analysis.get("polarity"):
-                        save_analysis_cache(source_url, analysis)
+                # 2. 无缓存则调用 AI (这是最耗时的步骤)
+                print(f"🤖 AI 分析中: {normalized['title'][:30]}...")
+                analysis = analyze_article(normalized["title"], normalized["summary"])
+                # 3. 保存到缓存
+                if source_url and analysis.get("polarity"):
+                    save_analysis_cache(source_url, analysis)
+        
+        tags = analysis.get("tags") or []
+        if cat_key:
+            category_label = get_category_label(cat_key)
+            if category_label not in tags:
+                tags.append(category_label)
+        
+        return {
+            "id": normalized["id"],
+            "title": normalized["title"],
+            "polarity": analysis.get("polarity", "neutral"),
+            "fact": analysis.get("fact") or normalized["summary"],
+            "impacts": analysis.get("impacts", []),
+            "opinion": analysis.get("opinion", ""),
+            "tags": tags,
+            "source_name": normalized["source_name"],
+            "source_url": normalized["source_url"],
+            "ingested_at": normalized.get("ingested_at")
+        }
 
-            tags = analysis.get("tags") or []
-            if category_key:
-                category_label = get_category_label(category_key)
-                if category_label not in tags:
-                    tags.append(category_label)
+    # 3. 并发执行
+    cards = []
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_article = {executor.submit(process_one, task): task for task in pending_tasks}
+        for future in as_completed(future_to_article):
+            try:
+                card = future.result()
+                if card:
+                    cards.append(card)
+            except Exception as e:
+                print(f"⚠️ 处理文章失败: {e}")
 
-            cards.append({
-                "id": article_id,
-                "title": normalized["title"],
-                "polarity": analysis.get("polarity", "neutral"),
-                "fact": analysis.get("fact") or normalized["summary"],
-                "impacts": analysis.get("impacts", []),
-                "opinion": analysis.get("opinion", ""),
-                "tags": tags,
-                "source_name": normalized["source_name"],
-                "source_url": normalized["source_url"]
-            })
-
-            if len(cards) >= limit:
-                return cards
-
+    # 保持一定的排序顺序（可选，目前多线程返回顺序是随机的）
     return cards
-
 
 def find_article_by_id(article_id: int) -> Optional[Dict[str, Any]]:
     data = get_raw_articles_by_category()
@@ -550,10 +538,35 @@ def find_article_by_id(article_id: int) -> Optional[Dict[str, Any]]:
     return None
 
 
-def build_daily_briefing(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
+def build_daily_briefing(cards: List[Dict[str, Any]], persona: str = "SPECIALIST") -> Dict[str, Any]:
     now = datetime.now()
     takeaways = [card.get("fact") for card in cards[:3] if card.get("fact")]
     read_time = f"{max(3, len(cards) * 2)} min read"
+
+    persona_configs = {
+        "VISIONARY": {
+            "title": "Visionary Hub",
+            "subtitle": "追踪颠覆性技术的指数级增长信号",
+            "synthesis": "基于 [技术远见者] 模式，系统已对实验室级别的物理突破与长周期技术债务进行了关联分析。"
+        },
+        "INVESTOR": {
+            "title": "Alpha Pursuit",
+            "subtitle": "锁定资本市场的非对称获利窗口",
+            "synthesis": "基于 [价值投资者] 模式，已剔除短期噪音，重点揭示财务基本面与宏观政策的共鸣节点。"
+        },
+        "SPECIALIST": {
+            "title": "Specialist Brain",
+            "subtitle": "拆解产品演进与极致体验的微观细节",
+            "synthesis": "基于 [产品专家] 模式，已对 15 个竞对功能点进行了逆向拆解，聚焦增长黑客路径。"
+        },
+        "FOUNDER": {
+            "title": "Founder's Choice",
+            "subtitle": "获取驱动组织进化与资源整合的顶级情报",
+            "synthesis": "基于 [创业者] 模式，情报已按‘生存/扩张/防守’三个维度重新排布，重点关注资本效率。"
+        }
+    }
+    
+    config = persona_configs.get(persona, persona_configs["SPECIALIST"])
 
     impact_chain = {
         "trigger": cards[0]["title"] if cards else "今日暂无重点情报",
@@ -566,14 +579,100 @@ def build_daily_briefing(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     return {
         "date": now.strftime("%Y-%m-%d"),
-        "title": "Daily Intelligence Briefing",
-        "subtitle": "Today's five signals you should not miss.",
+        "title": config["title"],
+        "subtitle": config["subtitle"],
         "read_time": read_time,
-        "synthesis": "基于今日高信号情报，系统已完成结构化筛选与影响链推演。",
+        "synthesis": config["synthesis"],
         "takeaways": takeaways,
         "top_picks": cards,
         "impact_chain": impact_chain
     }
+
+
+# ============ Daily Briefing 响应级缓存 ============
+
+def get_cached_daily_briefing(persona: str = "SPECIALIST") -> Optional[Dict[str, Any]]:
+    """获取当天缓存的 daily briefing 响应（每天每个角色生成一次）"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    cache_key = f"daily_briefing_{persona}_{today}"
+
+    try:
+        ph = get_placeholder()
+        with db_conn() as conn:
+            cur = conn.cursor()
+            # 使用 api_cache 表存储响应级缓存
+            cur.execute(f"""
+                SELECT response_data, created_at
+                FROM api_cache
+                WHERE cache_key = {ph} AND DATE(created_at) = DATE(CURRENT_TIMESTAMP)
+            """, (cache_key,))
+            row = cur.fetchone()
+
+            if row:
+                if isinstance(row, dict):
+                    data = row.get("response_data")
+                else:
+                    data = row[0]
+
+                if data:
+                    print(f"⚡ Daily Briefing 命中缓存: {today}")
+                    return json.loads(data) if isinstance(data, str) else data
+    except Exception as e:
+        print(f"⚠️ 读取 Daily Briefing 缓存失败: {e}")
+
+    return None
+
+
+def save_daily_briefing_cache(briefing_data: Dict[str, Any], persona: str = "SPECIALIST") -> None:
+    """保存 daily briefing 响应到缓存"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    cache_key = f"daily_briefing_{persona}_{today}"
+
+    try:
+        ph = get_placeholder()
+        with db_conn() as conn:
+            cur = conn.cursor()
+
+            # 确保 api_cache 表存在
+            if is_postgres():
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS api_cache (
+                        id SERIAL PRIMARY KEY,
+                        cache_key VARCHAR(255) UNIQUE NOT NULL,
+                        response_data JSONB,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+            else:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS api_cache (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        cache_key TEXT UNIQUE NOT NULL,
+                        response_data TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+            # 插入或更新缓存
+            response_json = json.dumps(briefing_data, ensure_ascii=False)
+            if is_postgres():
+                cur.execute(f"""
+                    INSERT INTO api_cache (cache_key, response_data, created_at)
+                    VALUES ({ph}, {ph}, CURRENT_TIMESTAMP)
+                    ON CONFLICT (cache_key) DO UPDATE SET
+                        response_data = EXCLUDED.response_data,
+                        created_at = CURRENT_TIMESTAMP
+                """, (cache_key, response_json))
+            else:
+                cur.execute(f"""
+                    INSERT OR REPLACE INTO api_cache (cache_key, response_data, created_at)
+                    VALUES ({ph}, {ph}, CURRENT_TIMESTAMP)
+                """, (cache_key, response_json))
+
+            conn.commit()
+            print(f"💾 Daily Briefing 已缓存: {today}")
+    except Exception as e:
+        print(f"⚠️ 保存 Daily Briefing 缓存失败: {e}")
 
 
 def fetch_special_data(content: str = "内容") -> dict:
@@ -725,13 +824,47 @@ def sync_status():
 
 @app.route('/api/raw-data', methods=['GET'])
 def get_raw_data():
-    """获取原始公众号数据（数据中心用）"""
+    """获取原始公众号数据（数据中心用）
+
+    Query Parameters:
+        category: 分类 key (ai, digital, legal, finance, vc)
+        date: 可选，格式 YYYY-MM-DD，筛选指定日期的数据
+
+    Returns:
+        - 不传 date: 返回数据库中该分类的最新数据（最多40条）
+        - 传 date: 返回指定日期入库的数据
+    """
     category = request.args.get('category', 'legal')
+    date_str = request.args.get('date')  # 可选：YYYY-MM-DD
+
     items = get_articles_for_category(category)
 
+    # 如果指定了日期，按 ingested_at 筛选
+    if date_str:
+        try:
+            target_date = date_str  # 直接用字符串比较 YYYY-MM-DD 前缀
+            items = [
+                item for item in items
+                if item.get('ingested_at', '').startswith(target_date)
+            ]
+        except Exception as e:
+            return error(
+                code="INVALID_DATE",
+                message=f"日期格式错误: {date_str}，请使用 YYYY-MM-DD",
+                status_code=400
+            )
+
     return success(
-        data={"category": category, "label": get_category_label(category), "items": items},
-        meta={"count": len(items)}
+        data={
+            "category": category,
+            "label": get_category_label(category),
+            "items": items,
+            "date_filter": date_str  # 返回筛选条件，便于前端确认
+        },
+        meta={
+            "count": len(items),
+            "filtered_by_date": date_str is not None
+        }
     )
 
 
@@ -939,11 +1072,29 @@ def toggle_entity_subscription(entity_id: str):
 
 @app.route('/api/briefing/daily', methods=['GET'])
 def get_daily_briefing():
-    """生成每日简报（与情报卡片同源）"""
+    """生成每日简报（带响应级缓存，支持 Persona 差异化，每天每角色只生成一次）"""
+    # 1. 检查角色与强制刷新
+    persona = request.args.get('persona', 'SPECIALIST')
+    force_refresh = request.args.get('refresh', 'false').lower() == 'true'
+
+    # 2. 尝试读取缓存（除非强制刷新）
+    if not force_refresh:
+        cached = get_cached_daily_briefing(persona=persona)
+        if cached:
+            return jsonify(cached)
+
+    # 3. 无缓存或强制刷新，重新生成
     limit = int(request.args.get('limit', 5))
     skip_ai = request.args.get('skip_ai', 'false').lower() == 'true'
+
+    print(f"🔄 为 {persona} 生成 Daily Briefing (limit={limit}, skip_ai={skip_ai})...")
     cards = build_intelligence_cards(limit=limit, skip_ai=skip_ai)
-    return jsonify(build_daily_briefing(cards))
+    briefing = build_daily_briefing(cards, persona=persona)
+
+    # 4. 保存到缓存
+    save_daily_briefing_cache(briefing, persona=persona)
+
+    return jsonify(briefing)
 
 
 # ============ Topics / Fortress API ============
@@ -972,27 +1123,17 @@ def get_topic(topic_id):
         return jsonify({'error': 'Topic not found'}), 404
     return jsonify(topic)
 
-@app.route('/api/topics/<int:topic_id>/evidence', methods=['POST'])
-def add_evidence(topic_id):
-    """为主题添加证据砖块"""
-    data = request.json
-    if not data or 'note' not in data:
-        return jsonify({'error': 'Note is required'}), 400
-    
-    eid = topic_service.add_evidence(
-        topic_id,
-        data['note'],
-        data.get('source_title', ''),
-        data.get('source_url', ''),
-        data.get('highlight_text')
-    )
-    return jsonify({'id': eid, 'message': 'Evidence added'}), 201
+@app.route('/api/entities/radar', methods=['GET'])
+def get_entities_radar():
+    """获取实体雷达数据"""
+    data = entity_service.get_radar_data()
+    return success(data={"entities": data}, meta={"count": len(data)})
 
 
 # ============ 启动 ============
 
 if __name__ == '__main__':
-    # 全量初始化 (Supabase / PostgreSQL)
+    # 全量初始化 (Railway PostgreSQL)
     from database import init_db
     init_db()
     
