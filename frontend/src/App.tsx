@@ -1,213 +1,106 @@
-import { useState, useEffect } from "react";
-import { Header } from "@/components/layout/Header";
+import { useState } from "react";
 import { BottomNav } from "@/components/layout/BottomNav";
-import { IntelligenceCard } from "@/components/IntelligenceCard";
-import { CategoryFilter, CATEGORY_TAGS } from "@/components/CategoryFilter";
-import { BriefingEntryCard } from "@/components/BriefingEntryCard";
 import { ArticleDetail } from "@/views/ArticleDetail";
 import { EntityRadar } from "@/views/EntityRadar";
 import { DailyBriefing } from "@/views/DailyBriefing";
-import { Profile } from "@/views/Profile";
 import { ProfilePage } from "@/views/ProfilePage";
 import { MyNotes } from "@/views/MyNotes";
 import { DataView } from "@/views/DataView";
-import { IntelligenceSkeleton } from "@/components/IntelligenceSkeleton";
-import type { IntelligenceCardData } from "@/types/index";
-import { fetchIntelligence, type IntelligenceCard as BackendCard } from "@/lib/api";
-import { AnimatePresence } from "framer-motion";
+import { IntelligenceView } from "@/views/IntelligenceView";
+import { OnboardingProvider, OnboardingCarousel } from "@/components/onboarding";
+import { PersonaProvider } from "@/context/PersonaContext";
 import type { Tab as BottomTab } from "@/components/layout/BottomNav";
 
 type Tab = BottomTab | "my-notes";
 type ViewState = "feed" | "detail" | "briefing";
-
-// 将后端卡片转为前端类型
-function backendToFrontend(card: BackendCard): IntelligenceCardData {
-  return {
-    id: card.id,
-    title: card.title,
-    polarity: card.polarity,
-    fact: card.core_insight || card.fact, // 优先展示核心洞察
-    impacts: card.impacts,
-    opinion: card.alpha_opportunity || card.opinion, // 优先展示 Alpha 机会
-    tags: card.tags || [],
-    source_name: card.source_name,
-    source_url: card.source_url,
-  };
-}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>("data");
   const [view, setView] = useState<ViewState>("feed");
   const [activeArticleId, setActiveArticleId] = useState<number | null>(null);
 
-  // 统一使用分类 key 筛选
-  const [activeCategory, setActiveCategory] = useState("all");
-
-  const [feed, setFeed] = useState<IntelligenceCardData[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // 调用后端 /api/intelligence 获取 AI 分析后的情报 (仅在 home tab 时)
-  useEffect(() => {
-    // 只在 home tab 时才加载情报
-    if (activeTab !== "home") {
-      return;
-    }
-
-    let isActive = true;
-
-    async function loadFeed() {
-      setLoading(true);
-      try {
-        // 调用后端 API（默认开启 AI 分析）
-        const response = await fetchIntelligence(20, false, activeCategory);
-        if (!isActive) return;
-
-        // 转换为前端类型
-        const cards = response.cards.map(backendToFrontend);
-        setFeed(cards);
-      } catch (err) {
-        if (!isActive) return;
-        setFeed([]);
-        // 后端不可用时静默失败
-        console.warn('后端 API 不可用，情报加载失败');
-      } finally {
-        if (isActive) {
-          setLoading(false);
-        }
-      }
-    }
-
-    loadFeed();
-
-    return () => {
-      isActive = false;
-    };
-  }, [activeCategory, activeTab]);
-
-  const handleCardClick = (id: number) => {
-    setActiveArticleId(id);
-    setView("detail");
-    window.scrollTo(0, 0);
-  };
+  // const [loading, setLoading] = useState(false); // Cleaned up unused state
 
   const handleBack = () => {
     setView("feed");
     setActiveArticleId(null);
   };
 
-  const activeCategoryLabel = CATEGORY_TAGS.find((cat) => cat.key === activeCategory)?.name || activeCategory;
-  const filteredFeed = feed;
-
   if (view === "briefing") {
-    return <DailyBriefing onBack={handleBack} />;
+    return (
+      <OnboardingProvider>
+        <OnboardingCarousel />
+        <DailyBriefing onBack={handleBack} />
+      </OnboardingProvider>
+    );
   }
 
   if (view === "detail" && activeArticleId) {
     return (
-      <ArticleDetail id={activeArticleId} onBack={handleBack} />
+      <OnboardingProvider>
+        <OnboardingCarousel />
+        <ArticleDetail id={activeArticleId} onBack={handleBack} />
+      </OnboardingProvider>
     );
   }
 
   // Full screen view for My Notes (hide bottom nav if desired, or keep it)
   if (activeTab === "my-notes") {
-    return <MyNotes onBack={() => setActiveTab("profile")} />;
+    return (
+      <OnboardingProvider>
+        <OnboardingCarousel />
+        <MyNotes onBack={() => setActiveTab("profile")} />
+      </OnboardingProvider>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-[#FAF9F6] font-sans text-zinc-900 selection:bg-zinc-200 pb-20">
-      {/* Hide Header on Profile tab or when loading home feed */}
-      {(activeTab !== "profile" && !(activeTab === "home" && loading)) && <Header />}
-
-      <main className="max-w-md mx-auto px-4 py-4">
-        {/* VIEW: HOME */}
-        {activeTab === "home" && (
-          loading ? (
-            <div className="-mx-4 -mt-4">
-              <IntelligenceSkeleton />
-            </div>
-          ) : (
-            <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-              {/* 统一分类标签筛选 */}
-              <CategoryFilter
-                activeKey={activeCategory}
-                onChange={setActiveCategory}
-              />
-
-              {/* Today's Briefing 入口卡片 - 核心功能前置 */}
-              <div className="mt-4 mb-4">
-                <BriefingEntryCard onClick={() => setActiveTab("briefing")} />
+    <PersonaProvider>
+      <OnboardingProvider>
+        <OnboardingCarousel />
+        <div className="h-screen flex flex-col bg-white font-sans text-gray-900 selection:bg-blue-100 overflow-hidden">
+          {/* Main Content Area - Scrollable */}
+          <main className="flex-1 overflow-hidden">
+            {/* VIEW: HOME (New Intelligence Briefing) */}
+            {activeTab === "home" && (
+              <div className="h-full animate-in fade-in slide-in-from-bottom-2 duration-500">
+                <IntelligenceView />
               </div>
+            )}
 
-              {/* 高保真情报卡片列表 (Standard PRD v3.0) */}
-              <div className="space-y-4">
-                {filteredFeed.length > 0 ? (
-                  <AnimatePresence mode="popLayout">
-                    {filteredFeed.map(card => (
-                      <IntelligenceCard
-                        key={card.id}
-                        data={card}
-                        onClick={() => handleCardClick(card.id)}
-                      />
-                    ))}
-                  </AnimatePresence>
-                ) : (
-                  <div className="py-20 text-center flex flex-col items-center gap-4 animate-in fade-in zoom-in-95">
-                    <div className="w-12 h-12 bg-zinc-100 rounded-2xl flex items-center justify-center text-zinc-300">
-                      <span className="font-black text-xl">!</span>
-                    </div>
-                    <p className="text-[11px] font-black text-zinc-400 uppercase tracking-widest">No Intelligence for {activeCategoryLabel}</p>
-                  </div>
-                )}
+            {/* VIEW: SUBSCRIBE (Entity Radar) */}
+            {activeTab === "subscribe" && (
+              <div className="h-full animate-in fade-in zoom-in-95 duration-500">
+                <EntityRadar />
               </div>
+            )}
 
-              {!loading && (
-                <div className="text-center py-8 text-zinc-300 text-[10px] uppercase tracking-widest font-medium">
-                  Briefing Complete
-                </div>
-              )}
-            </div>
-          )
-        )}
+            {/* VIEW: BRIEFING (Lenny Style Editorial) */}
+            {activeTab === "briefing" && (
+              <div className="h-full animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <DailyBriefing onBack={() => setActiveTab("home")} />
+              </div>
+            )}
 
-        {/* VIEW: SUBSCRIBE (Entity Radar) */}
-        {
-          activeTab === "subscribe" && (
-            <div className="animate-in fade-in zoom-in-95 duration-500 -mx-4 -mt-4">
-              <EntityRadar />
-            </div>
-          )
-        }
+            {/* VIEW: DATA CENTER (Raw Articles) */}
+            {activeTab === "data" && (
+              <div className="h-full animate-in fade-in zoom-in-95 duration-500">
+                <DataView />
+              </div>
+            )}
 
-        {/* VIEW: BRIEFING (Lenny Style Editorial) */}
-        {
-          activeTab === "briefing" && (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 -mx-4 -mt-4">
-              <DailyBriefing onBack={() => setActiveTab("home")} />
-            </div>
-          )
-        }
+            {/* VIEW: PROFILE */}
+            {activeTab === "profile" && (
+              <div className="h-full animate-in fade-in zoom-in-95 duration-300">
+                <ProfilePage />
+              </div>
+            )}
+          </main>
 
-        {/* VIEW: DATA CENTER (Raw Articles) */}
-        {
-          activeTab === "data" && (
-            <div className="animate-in fade-in zoom-in-95 duration-500 -mx-4 -mt-4">
-              <DataView />
-            </div>
-          )
-        }
-
-
-        {/* VIEW: PROFILE (新暗色主题) */}
-        {
-          activeTab === "profile" && (
-            <div className="animate-in fade-in zoom-in-95 duration-300 -mx-4 -mt-4">
-              <ProfilePage />
-            </div>
-          )
-        }
-      </main >
-
-      <BottomNav activeTab={activeTab as any} onTabChange={setActiveTab as any} />
-    </div >
+          {/* Fixed Bottom Navigation */}
+          <BottomNav activeTab={activeTab as any} onTabChange={setActiveTab as any} />
+        </div>
+      </OnboardingProvider>
+    </PersonaProvider>
   );
 }

@@ -4,4 +4,5 @@ export interface ArticleDetailData extends IntelligenceCardData {
     content: string; // Markdown body
     summary: string; // The Brain TL;DR
     original_url?: string;
+    takeaways?: string[]; // Key takeaways for the article
 }

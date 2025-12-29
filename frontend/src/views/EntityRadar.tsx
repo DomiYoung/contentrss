@@ -3,7 +3,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Search, Plus, Briefcase, Hash, Factory } from "lucide-react";
 import { fetchEntities, toggleSubscription } from "@/lib/api";
 import { triggerHaptic } from "@/lib/haptic";
+import { PageSkeleton } from "@/components/PageSkeleton";
 import type { Entity } from "@/types/entities";
+import { Sparkles, TrendingUp, BarChart3, Activity } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export function EntityRadar() {
     const [entities, setEntities] = useState<Entity[]>([]);
@@ -50,7 +53,22 @@ export function EntityRadar() {
     const typeColors = {
         company: "bg-blue-100 text-blue-600",
         industry: "bg-orange-100 text-orange-600",
-        topic: "bg-purple-100 text-purple-600"
+        topic: "bg-indigo-100 text-indigo-600"
+    };
+
+    const AISignals = ({ dimensions }: { dimensions: Record<string, number> }) => {
+        return (
+            <div className="flex gap-2 mt-3">
+                <div className="flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
+                    <Activity size={10} className="text-emerald-600" />
+                    <span className="text-[9px] font-black text-emerald-700 uppercase tracking-tighter">SENTIMENT {dimensions.sentiment}%</span>
+                </div>
+                <div className="flex items-center gap-1 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">
+                    <BarChart3 size={10} className="text-blue-600" />
+                    <span className="text-[9px] font-black text-blue-700 uppercase tracking-tighter">VOLUME {dimensions.volume}%</span>
+                </div>
+            </div>
+        );
     };
 
     return (
@@ -84,7 +102,6 @@ export function EntityRadar() {
                     />
                 </div>
 
-                {/* Category Pills */}
                 <div className="flex items-center gap-2 mb-8 overflow-x-auto no-scrollbar pb-2">
                     {[
                         { id: "all", label: "全部" },
@@ -94,11 +111,16 @@ export function EntityRadar() {
                     ].map(tab => (
                         <button
                             key={tab.id}
-                            onClick={() => setActiveTab(tab.id as any)}
-                            className={`px-6 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-all ${activeTab === tab.id
-                                ? "bg-white shadow-sm text-gray-900 border border-gray-100"
-                                : "bg-gray-100/50 text-gray-400 hover:bg-gray-100"
-                                }`}
+                            onClick={() => {
+                                triggerHaptic("light");
+                                setActiveTab(tab.id as any);
+                            }}
+                            className={cn(
+                                "px-6 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-all",
+                                activeTab === tab.id
+                                    ? "bg-gray-900 text-white shadow-lg shadow-gray-200"
+                                    : "bg-gray-100/50 text-gray-400 hover:bg-gray-100"
+                            )}
                         >
                             {tab.label}
                         </button>
@@ -109,8 +131,10 @@ export function EntityRadar() {
                 <div className="space-y-4">
                     <AnimatePresence mode="popLayout">
                         {loading ? (
-                            <div className="text-center py-20">
-                                <span className="text-xs font-bold text-gray-300 uppercase tracking-widest animate-pulse">Scanning...</span>
+                            <div className="space-y-4">
+                                {Array.from({ length: 5 }).map((_, i) => (
+                                    <div key={i} className="h-20 bg-gray-50/50 rounded-2xl animate-pulse" />
+                                ))}
                             </div>
                         ) : (
                             filteredEntities.map((entity, i) => {
@@ -128,16 +152,29 @@ export function EntityRadar() {
                                         className="flex items-center justify-between p-4 bg-white dark:bg-white/5 border border-gray-50 dark:border-white/5 rounded-2xl shadow-sm"
                                     >
                                         <div className="flex items-center gap-4">
-                                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${colorClass}`}>
-                                                <Icon size={20} />
+                                            <div className={cn("w-14 h-14 rounded-2xl flex items-center justify-center text-xl shadow-inner", colorClass)}>
+                                                {entity.icon || <Icon size={24} />}
                                             </div>
                                             <div>
-                                                <h4 className="font-bold text-gray-900 dark:text-white text-[15px] leading-tight mb-1">
-                                                    {entity.name}
-                                                </h4>
-                                                <p className="text-xs text-gray-500 font-medium">
-                                                    {entity.subscriber_count > 999 ? (entity.subscriber_count / 1000).toFixed(1) + 'k' : entity.subscriber_count} 关注
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <h4 className="font-black text-gray-900 text-[16px] tracking-tight">
+                                                        {entity.name}
+                                                    </h4>
+                                                    {entity.dimensions && (
+                                                        <Sparkles size={12} className="text-amber-500 fill-amber-500 animate-pulse" />
+                                                    )}
+                                                </div>
+                                                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">
+                                                    {entity.subscriber_count > 999 ? (entity.subscriber_count / 1000).toFixed(1) + 'k' : entity.subscriber_count} 关注者 • {entity.type.toUpperCase()}
                                                 </p>
+                                                <div className="flex gap-1.5 mt-1">
+                                                    {entity.tags?.map(tag => (
+                                                        <span key={tag} className="text-[8px] bg-zinc-50 text-zinc-400 px-1.5 py-0.5 rounded border border-zinc-100 font-black uppercase tracking-tighter">
+                                                            {tag}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                                {entity.dimensions && <AISignals dimensions={entity.dimensions} />}
                                             </div>
                                         </div>
 
@@ -164,15 +201,26 @@ export function EntityRadar() {
                 </div>
 
                 {/* Recommendations Header */}
-                <div className="mt-10 mb-6 flex items-center gap-2">
-                    <span className="text-lg">🔥</span>
-                    <h3 className="font-bold text-gray-900">热门推荐</h3>
+                <div className="mt-12 mb-6">
+                    <div className="flex items-center gap-2 mb-1">
+                        <TrendingUp size={16} className="text-amber-600" />
+                        <h3 className="font-black text-gray-900 tracking-tight">热度增长潜力</h3>
+                    </div>
+                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest px-6">AI 推荐关注 · 实时同步</p>
                 </div>
 
-                <div className="flex flex-wrap gap-3">
-                    {["LVMH", "苹果 Apple", "NVidia", "SpaceX", "元宇宙", "新能源"].map(tag => (
-                        <button key={tag} className="px-4 py-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-100 transition-colors">
-                            {tag}
+                <div className="flex flex-wrap gap-2">
+                    {entities.slice(5, 12).map(entity => (
+                        <button
+                            key={entity.id}
+                            className="px-4 py-2 bg-gray-50 hover:bg-zinc-100 text-gray-600 rounded-xl text-xs font-bold transition-all border border-gray-100 flex items-center gap-2 group"
+                            onClick={() => {
+                                triggerHaptic("light");
+                                setSearchQuery(entity.name);
+                            }}
+                        >
+                            <span className="opacity-40 group-hover:opacity-100 transition-opacity">#</span>
+                            {entity.name}
                         </button>
                     ))}
                 </div>

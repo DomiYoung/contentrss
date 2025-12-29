@@ -36,13 +36,49 @@
   }
 }
 
+/* Briefing Design System Extensions */
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+.briefing-card-shadow {
+  box-shadow: 0 2px 12px -2px rgba(0, 0, 0, 0.04), 0 4px 6px -2px rgba(0, 0, 0, 0.02);
+}
+
 body {
-  @apply text-foreground font-sans antialiased;
-  /* Use iOS system font stack or Inter as fallback */
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+  @apply text-foreground font-sans antialiased bg-white;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
 /* Viral Watermark Style */
 .viral-watermark {
   @apply fixed bottom-4 right-4 text-[10px] text-zinc-300 pointer-events-none opacity-50 uppercase tracking-widest;
+}
+
+/* Skeleton Shimmer Animation */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    #f0f0f0 25%,
+    #e8e8e8 37%,
+    #f0f0f0 63%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
 }

@@ -73,61 +73,110 @@ export function ArticleDetail({ id, onBack }: ArticleDetailProps) {
 
             {/* Scrollable Content */}
             <main className="flex-1 overflow-y-auto pb-32">
-                <article className="px-6 py-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-                    {/* Meta Labels */}
-                    <div className="flex items-center gap-3 mb-4">
-                        <span className="bg-blue-50 text-blue-600 text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg">Daily Briefing</span>
-                        <span className="text-[11px] text-gray-400 font-medium">
-                            {new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric" })} · 5 min read
+                <article className="px-6 py-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                    {/* Meta Labels - Category Only at Top */}
+                    <div className="flex items-center gap-3 mb-6">
+                        <span className="bg-blue-900 text-white text-[10px] font-black uppercase tracking-[0.2em] px-3 py-1.5 rounded-full shadow-lg shadow-blue-100">
+                            {article.tags?.[0] || 'Intelligence'}
+                        </span>
+                        <div className="h-px bg-gray-100 flex-1" />
+                        <span className="text-[10px] text-gray-300 font-bold uppercase tracking-widest">
+                            {article.source_name || 'MOSS INSIGHT'}
                         </span>
                     </div>
 
-                    <h1 className="text-[32px] font-black leading-[1.1] text-gray-900 tracking-tighter mb-6 font-display">
+                    <h1 className="text-[36px] font-black leading-[1.05] text-gray-900 tracking-tighter mb-8 font-display">
                         {article.title}
                     </h1>
 
-                    <p className="text-[17px] text-gray-500 leading-relaxed mb-10 font-medium">
-                        {article.summary.slice(0, 150)}...
-                    </p>
+                    {/* Source Information - Subtitle Style */}
+                    {article.source_name && (
+                        <div className="flex items-center gap-2 mb-10 pb-6 border-b border-gray-50">
+                            <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-xs font-black text-gray-400">
+                                {article.source_name[0]}
+                            </div>
+                            <div className="flex flex-col">
+                                <span className="text-xs font-black text-gray-900 leading-none mb-1">来源: {article.source_name}</span>
+                                <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">Verified Source · High Integrity</span>
+                            </div>
+                        </div>
+                    )}
 
-                    {/* Key Takeaways Card */}
-                    <div className="bg-blue-50/50 rounded-[32px] p-6 mb-12 border border-blue-100/50 relative overflow-hidden">
-                        <div className="absolute top-0 right-0 w-32 h-32 bg-blue-100/30 rounded-full -mr-16 -mt-16 blur-3xl" />
-                        <h3 className="text-[18px] font-black text-gray-900 flex items-center gap-2.5 mb-6 relative z-10">
-                            <Pin className="text-blue-600 rotate-12" size={20} strokeWidth={3} />
-                            关键要点
-                        </h3>
-                        <ul className="space-y-6 relative z-10">
-                            {article.takeaways?.slice(0, 3).map((take: string, i: number) => (
-                                <li key={i} className="flex gap-4 items-start group">
-                                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-600 shrink-0 group-hover:scale-150 transition-transform" />
-                                    <div>
-                                        <p className="text-[15px] font-black text-gray-900 leading-tight mb-1">{take.split(':')[0]}</p>
-                                        <p className="text-[14px] text-gray-600 leading-relaxed font-medium">{take.split(':')[1] || take}</p>
-                                    </div>
-                                </li>
-                            )) || (
-                                    <li className="flex gap-4 items-start">
-                                        <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-600 shrink-0" />
-                                        <p className="text-[15px] text-gray-700 leading-relaxed font-medium">AI Insights indicate a strong market shift toward sustainable architectures.</p>
-                                    </li>
-                                )}
-                        </ul>
+                    <div className="relative">
+                        <div className="absolute -left-6 top-0 bottom-0 w-1 bg-blue-600 rounded-r-full opacity-20" />
+                        <p className="text-[18px] text-gray-500 leading-relaxed mb-12 font-medium italic">
+                            {article.summary}
+                        </p>
                     </div>
 
-                    {/* Content with Drop Cap */}
-                    <div className="prose prose-gray prose-lg">
+                    {/* Key Takeaways Card */}
+                    <div className="bg-gray-50 rounded-[40px] p-8 mb-16 border border-gray-100 relative overflow-hidden group">
+                        <div className="absolute top-0 right-0 w-48 h-48 bg-blue-600/5 rounded-full -mr-24 -mt-24 blur-3xl transition-transform group-hover:scale-125" />
+                        <h3 className="text-[20px] font-black text-gray-900 flex items-center gap-3 mb-8 relative z-10">
+                            <Pin className="text-blue-600 rotate-12" size={22} strokeWidth={3} />
+                            关键见解
+                        </h3>
+                        <div className="space-y-8 relative z-10">
+                            {article.takeaways?.slice(0, 3).map((take: string, i: number) => {
+                                const parts = take.includes(':') ? take.split(':') : take.split('：');
+                                return (
+                                    <div key={i} className="flex gap-5 items-start">
+                                        <div className="mt-2 w-2 h-2 rounded-full bg-blue-600 shrink-0 shadow-[0_0_10px_rgba(37,99,235,0.4)]" />
+                                        <div className="flex-1">
+                                            {parts.length > 1 ? (
+                                                <>
+                                                    <p className="text-[16px] font-black text-gray-900 leading-tight mb-2 tracking-tight">{parts[0]}</p>
+                                                    <p className="text-[15px] text-gray-600 leading-relaxed font-medium">{parts[1]}</p>
+                                                </>
+                                            ) : (
+                                                <p className="text-[16px] text-gray-800 leading-relaxed font-bold tracking-tight">{take}</p>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            }) || (
+                                    <div className="flex gap-4 items-start">
+                                        <div className="mt-2 w-2 h-2 rounded-full bg-blue-600 shrink-0" />
+                                        <p className="text-[16px] text-gray-700 leading-relaxed font-bold">AI 实时分析已完成，该趋势预计在 6 个月内形成规模效应。</p>
+                                    </div>
+                                )}
+                        </div>
+                    </div>
+
+                    {/* Content Section */}
+                    <div className="prose prose-gray prose-lg mb-16 px-1">
                         {article.content.split("\n\n").map((para, i) => (
                             <p
                                 key={i}
                                 className={cn(
-                                    "text-[18px] leading-[1.8] text-gray-800 font-medium tracking-tight mb-6",
-                                    i === 0 && "first-letter:float-left first-letter:text-[4.5rem] first-letter:font-black first-letter:leading-[0.8] first-letter:mr-3 first-letter:mt-2 first-letter:text-blue-600"
+                                    "text-[19px] leading-[1.85] text-gray-800 font-medium tracking-tight mb-8 text-justify",
+                                    i === 0 && "first-letter:float-left first-letter:text-[5.5rem] first-letter:font-black first-letter:leading-[0.75] first-letter:mr-4 first-letter:mt-3 first-letter:text-gray-900 first-letter:drop-shadow-sm"
                                 )}
                             >
                                 {para}
                             </p>
                         ))}
+                    </div>
+
+                    {/* Article Footer - Time & Source URL */}
+                    <div className="pt-12 border-t border-gray-100 space-y-4">
+                        <div className="flex items-center justify-between text-[11px] font-black text-gray-400 uppercase tracking-[0.2em]">
+                            <span>发布于</span>
+                            <span>{new Date().toLocaleDateString("zh-CN", { year: 'numeric', month: "long", day: "numeric", weekday: "long" })}</span>
+                        </div>
+                        {article.original_url && (
+                            <a
+                                href={article.original_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block w-full text-center py-4 bg-gray-50 rounded-2xl text-[12px] font-bold text-gray-400 hover:text-gray-900 transition-colors uppercase tracking-widest border border-gray-100"
+                            >
+                                查看原始链接
+                            </a>
+                        )}
+                        <div className="py-8 text-center">
+                            <div className="inline-block w-8 h-1 bg-gray-100 rounded-full" />
+                        </div>
                     </div>
                 </article>
             </main>

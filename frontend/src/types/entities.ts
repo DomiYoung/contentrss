@@ -5,6 +5,8 @@ export interface Entity {
     icon?: string;
     subscriber_count: number;
     is_subscribed: boolean;
+    dimensions?: Record<string, number>;
+    tags?: string[];
 }
 
 export interface SubscriptionResponse {

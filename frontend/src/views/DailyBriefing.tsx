@@ -5,6 +5,7 @@ import {
 import { fetchDailyBriefing } from "@/lib/api";
 import { triggerHaptic } from "@/lib/haptic";
 import { PageSkeleton } from "@/components/PageSkeleton";
+import { usePersona } from "@/context/PersonaContext";
 import type { DailyBriefingData } from "@/types/briefing";
 
 interface DailyBriefingProps {
@@ -36,29 +37,36 @@ function EditorNote({ date }: { date: string }) {
 function FeaturedStory({ article }: { article: any }) {
     if (!article) return null;
     return (
-        <div className="relative overflow-hidden rounded-3xl bg-gray-900">
+        <div className="relative overflow-hidden rounded-[40px] bg-gray-900 shadow-2xl shadow-blue-900/10 active:scale-[0.98] transition-all group">
             {/* 背景渐变 */}
-            <div className="absolute inset-0 bg-gradient-to-br from-blue-600/20 to-purple-600/20" />
-            <div className="absolute top-0 right-0 w-40 h-40 bg-blue-500/10 rounded-full blur-3xl" />
+            <div className="absolute inset-0 bg-gradient-to-br from-blue-600/30 to-indigo-900/30" />
+            <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/10 rounded-full blur-[80px]" />
 
-            <div className="relative p-6">
-                <div className="flex items-center gap-2 mb-4">
-                    <Star size={14} className="text-amber-400 fill-amber-400" />
-                    <span className="text-[10px] text-amber-400 font-bold uppercase tracking-widest">今日焦点</span>
+            <div className="relative p-8">
+                <div className="flex items-center gap-3 mb-6">
+                    <div className="px-3 py-1 bg-amber-400 rounded-full flex items-center gap-1.5 shadow-lg shadow-amber-400/20">
+                        <Star size={12} className="text-gray-900 fill-gray-900" />
+                        <span className="text-[10px] text-gray-900 font-black uppercase tracking-widest">今日焦点</span>
+                    </div>
                 </div>
 
-                <h2 className="text-[22px] font-black text-white leading-tight mb-3">
-                    {article.title || "AI 芯片供应链重大调整，影响全球科技格局"}
+                <h2 className="text-[26px] font-black text-white leading-[1.2] mb-4 tracking-tighter">
+                    {article.title}
                 </h2>
 
-                <p className="text-sm text-gray-300 leading-relaxed mb-4 line-clamp-2">
-                    {article.summary || "行业专家分析认为，此次调整将对未来两年的市场格局产生深远影响..."}
+                <p className="text-[15px] text-blue-100/70 leading-relaxed mb-8 line-clamp-2 font-medium">
+                    {article.summary}
                 </p>
 
-                <div className="flex items-center justify-between">
-                    <span className="text-xs text-gray-400">{article.source_name || "行业分析"} · 5 分钟阅读</span>
-                    <button className="flex items-center gap-1.5 text-blue-400 text-sm font-medium">
-                        阅读全文 <ChevronRight size={16} />
+                <div className="flex items-center justify-between pt-6 border-t border-white/10">
+                    <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center text-[10px] font-black text-white">
+                            {article.source_name?.charAt(0) || "S"}
+                        </div>
+                        <span className="text-xs font-black text-white/60 tracking-tight">{article.source_name || "MOSS Insight"}</span>
+                    </div>
+                    <button className="flex items-center gap-1.5 text-blue-300 text-sm font-black uppercase tracking-widest">
+                        READ <ChevronRight size={16} />
                     </button>
                 </div>
             </div>
@@ -97,21 +105,21 @@ function MarketPulse() {
 // 编辑精选卡片
 function CuratedCard({ article, index }: { article: any; index: number }) {
     return (
-        <div className="flex gap-4 py-4 border-b border-gray-100 last:border-0">
-            <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center flex-shrink-0">
-                <span className="text-sm font-bold text-blue-600">{index + 1}</span>
+        <div className="flex gap-5 py-6 border-b border-gray-50 last:border-0 active:bg-gray-50 transition-all px-2 -mx-2 rounded-2xl group">
+            <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 text-[11px] font-black text-gray-400 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                {String(index + 1).padStart(2, '0')}
             </div>
             <div className="flex-1 min-w-0">
-                <h3 className="text-[15px] font-bold text-gray-900 leading-snug mb-1 line-clamp-2">
+                <h3 className="text-[17px] font-black text-gray-900 leading-[1.4] mb-2 line-clamp-2 tracking-tight">
                     {article.title}
                 </h3>
-                <div className="flex items-center gap-2 text-xs text-gray-500">
-                    <span>{article.source_name || "来源"}</span>
-                    <span>·</span>
-                    <span>{article.reading_time || "3 分钟"}</span>
+                <div className="flex items-center gap-3 text-[10px] font-black text-gray-300 uppercase tracking-widest">
+                    <span className="text-gray-500">{article.source_name || "SOURCE"}</span>
+                    <div className="w-1 h-1 rounded-full bg-gray-200" />
+                    <span>3 MIN READ</span>
                 </div>
             </div>
-            <ChevronRight size={18} className="text-gray-300 flex-shrink-0 mt-1" />
+            <ChevronRight size={18} className="text-gray-200 flex-shrink-0 mt-3 group-hover:text-blue-600 transition-colors" />
         </div>
     );
 }
@@ -129,8 +137,11 @@ export function DailyBriefing({ onBack }: DailyBriefingProps) {
         weekday: "long"
     });
 
+    const { currentPersona } = usePersona();
+
     useEffect(() => {
-        fetchDailyBriefing()
+        setLoading(true);
+        fetchDailyBriefing(currentPersona.id)
             .then(res => {
                 setData(res);
                 setLoading(false);
@@ -138,7 +149,7 @@ export function DailyBriefing({ onBack }: DailyBriefingProps) {
             .catch(() => {
                 setLoading(false);
             });
-    }, []);
+    }, [currentPersona.id]);
 
     const handleBack = () => {
         triggerHaptic("light");
